@@ -42,14 +42,15 @@ try:
         
         confidence = random.randint(15, 95)
         
+        # Solo il pallino colorato
         if confidence >= 70:
-            fascia = "🟢 VERDE"
+            fascia = "🟢"
             priority = 1
         elif confidence >= 40:
-            fascia = "🟡 GIALLO"
+            fascia = "🟡"
             priority = 2
         else:
-            fascia = "🔴 ROSSO"
+            fascia = "🔴"
             priority = 3
             
         prob_1x = round(random.uniform(1.18, 1.42), 2)
@@ -165,7 +166,7 @@ try:
     
     res = requests.post(telegram_url, json=payload)
     if res.status_code == 200:
-        print("✅ Schedine compatte inviate con successo su Telegram!")
+        print("✅ Schedine con soli pallini inviate con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res.text}")
 
