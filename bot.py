@@ -1,13 +1,7 @@
 import os
 import requests
 import random
-import time
-from datetime import datetime, timedelta
-
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from datetime import datetime
 
 # ==========================================
 # 🔑 CONFIGURAZIONE
@@ -16,22 +10,21 @@ API_TOKEN = os.environ.get('API_TOKEN', 'e2c702f19ed64c2088f7ab6c22493911')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8524849158:AAG2vVKUWqC4J_T1jDPA7IQxLY1uFy0jW9o')
 CHAT_ID = os.environ.get('CHAT_ID', '591667981')
 
-TOP_LEAGUES = ['SA', 'PL', 'PD', 'BL1', 'FL1']
 headers = {'X-Auth-Token': API_TOKEN}
-
 oggi = datetime.now().strftime('%Y-%m-%d')
 
-print(f"🔄 Recupero le partite ESCLUSIVAMENTE per la giornata di oggi: {oggi}...")
+print(f"🔄 Recupero le partite giornaliere per la data: {oggi}...")
 
 try:
+    # Interroghiamo l'endpoint giornaliero per catturare le partite di oggi da tutto il mondo
+    url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
+    res = requests.get(url_oggi, headers=headers)
+    
     raw_matches = []
-    for league in TOP_LEAGUES:
-        url_league = f"https://api.football-data.org/v4/competitions/{league}/matches?date={oggi}"
-        res_l = requests.get(url_league, headers=headers)
-        if res_l.status_code == 200:
-            raw_matches.extend(res_l.json().get('matches', []))
+    if res.status_code == 200:
+        raw_matches = res.json().get('matches', [])
 
-    print(f"✅ Trovate {len(raw_matches)} partite in programma oggi nei Top 5 campionati.")
+    print(f"✅ Trovate {len(raw_matches)} partite oggi in tutto il palinsesto.")
 
     partite_oggi = []
     for m in raw_matches:
@@ -47,7 +40,8 @@ try:
         tt_c, tt_o = round(random.uniform(11.0, 16.5), 1), round(random.uniform(9.5, 14.5), 1)
         co_c, co_o = round(random.uniform(4.0, 7.0), 1), round(random.uniform(3.5, 6.0), 1)
         
-        confidence = random.randint(20, 95)
+        # Confidence estesa per coprire tutte e tre le fasce
+        confidence = random.randint(15, 95)
         
         if confidence >= 70:
             fascia = "🥇 ORO"
@@ -84,94 +78,39 @@ try:
             "confidence": confidence, "fascia": fascia, "priority": priority
         })
 
+    # Ordiniamo per priorità fascia (Oro -> Argento -> Bronzo) e prendiamo le prime 15
     partite_oggi.sort(key=lambda x: (x['priority'], -x['confidence']))
+    migliori_15 = partite_oggi[:15]
 
     # ==========================================
-    # 📄 GENERAZIONE PDF GIORNALIERO ORDINATO
+    # 📝 COSTRUZIONE MESSAGGIO TELEGRAM
     # ==========================================
-    pdf_filename = f"Report_Schedine_Giornaliere_{oggi}.pdf"
-    doc = SimpleDocTemplate(pdf_filename, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
-    story = []
+    lines = []
+    lines.append(f"🎯 *TOP 15 PARTITE CONSIGLIATE* ({oggi})\n")
+    lines.append("Classificate per Confidenza (Oro, Argento, Bronzo):\n")
+
+    for i, m in enumerate(migliori_15, 1):
+        lines.append(f"*{i}. [{m['fascia']}] {m['casa']} - {m['ospite']}* ({m['confidence']}%)")
+        lines.append(f"   • Campionato: {m['comp']}")
+        lines.append(f"   • Combo: {m['combo']} (Q: {m['q_combo']})")
+        lines.append(f"   • Cartellini: Over {m['lin_cartellini']} | Tiri Porta: Over {m['lin_tp']}")
+        lines.append("")
+
+    testo_finale = "\n".join(lines)
+
+    # Invio diretto su Telegram
+    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": testo_finale,
+        "parse_mode": "Markdown"
+    }
     
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, leading=20, textColor=colors.HexColor('#1A237E'), alignment=1)
-    subtitle_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontSize=9, leading=11, textColor=colors.gray, alignment=1)
-    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontSize=12, leading=15, textColor=colors.HexColor('#0D47A1'), spaceBefore=10, spaceAfter=4)
-    cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=8, leading=10)
-    cell_header = ParagraphStyle('CellHeader', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.white, fontName="Helvetica-Bold")
-
-    story.append(Paragraph("<b>REPORT GIORNALIERO SCHEDINE - TOP 5 CAMPIONATI</b>", title_style))
-    story.append(Paragraph(f"Data Odierna: {oggi} | Ordinato per Classificazione Oro, Argento e Bronzo", subtitle_style))
-    story.append(Spacer(1, 10))
-
-    def crea_tabella_categoria(titolo, chiave_prono, prefisso=""):
-        story.append(Paragraph(f"<b>{titolo}</b>", section_style))
-        table_data = [
-            [Paragraph("<b>Fascia / Conf.</b>", cell_header),
-             Paragraph("<b>Lega</b>", cell_header),
-             Paragraph("<b>Incontro</b>", cell_header),
-             Paragraph("<b>Pronostico Giornaliero</b>", cell_header)]
-        ]
-        
-        for p in partite_oggi:
-            if chiave_prono == "combo":
-                prono_txt = f"{p['combo']} (Q: {p['q_combo']})"
-            elif chiave_prono == "dc":
-                prono_txt = f"Doppia Chance {p['dc']} (Q: {p['q_dc']})"
-            else:
-                val = p[chiave_prono]
-                q = round(1.55 + (val * 0.02), 2)
-                prono_txt = f"Over {val} {prefisso} (Q: {q})"
-                
-            table_data.append([
-                Paragraph(f"<b>{p['fascia']}</b> ({p['confidence']}%)", cell_style),
-                Paragraph(p["comp"], cell_style),
-                Paragraph(f"{p['casa']} vs {p['ospite']}", cell_style),
-                Paragraph(prono_txt, cell_style)
-            ])
-            
-        t = Table(table_data, colWidths=[90, 95, 145, 145])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1A237E')),
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E0E0E0')),
-            ('BACKGROUND', (0,1), (-1,-1), colors.white),
-            ('TOPPADDING', (0,0), (-1,-1), 4),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-        ]))
-        story.append(t)
-        story.append(Spacer(1, 8))
-
-    crea_tabella_categoria("🟨 1. OVER CARTELLINI", "lin_cartellini", "Cartellini")
-    crea_tabella_categoria("🎯 2. COMBO MATCH", "combo")
-    crea_tabella_categoria("⚽ 3. TIRI IN PORTA", "lin_tp", "Tiri in Porta")
-    crea_tabella_categoria("🚀 4. TIRI TOTALI", "lin_tt", "Tiri Totali")
-    crea_tabella_categoria("🛡️ 5. DOPPIE CHANCES", "dc")
-    crea_tabella_categoria("🚩 6. CALCI D'ANGOLO (CORNER)", "lin_corner", "Corner")
-
-    doc.build(story)
-    print(f"✅ PDF giornaliero '{pdf_filename}' generato correttamente.")
-
-    # ==========================================
-    # 🚀 INVIO DEL PDF SU TELEGRAM
-    # ==========================================
-    url_document = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    caption_txt = f"📅 *REPORT GIORNALIERO SCHEDINE* ({oggi})\nPartite odierne ordinate per Oro 🥇, Argento 🥈 e Bronzo 🥉."
-    
-    with open(pdf_filename, 'rb') as doc_file:
-        files = {'document': doc_file}
-        data = {
-            'chat_id': CHAT_ID,
-            'caption': caption_txt,
-            'parse_mode': 'Markdown'
-        }
-        res_send = requests.post(url_document, data=data, files=files)
-        
-    if res_send.status_code == 200:
-        print("✅ PDF giornaliero inviato con successo su Telegram!")
+    res = requests.post(telegram_url, json=payload)
+    if res.status_code == 200:
+        print("✅ Messaggio con le 15 partite inviato con successo su Telegram!")
     else:
-        print(f"⚠️ Errore invio Telegram: {res_send.text}")
+        print(f"⚠️ Errore Telegram: {res.text}")
 
 except Exception as e:
     print(f"❌ Errore generale: {e}")
