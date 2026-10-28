@@ -53,10 +53,9 @@ try:
             if not table and standings_list:
                 table = standings_list[0].get('table', [])
                 
-            # Mappatura sicura dei dati squadra
             classifiche_cache[comp_id] = {item['team']['name']: item for item in table if 'team' in item}
         else:
-            classifiche_cache[comp_id] = {} # Fallback vuoto per coppe o tornei senza classifica standard
+            classifiche_cache[comp_id] = {}
 
     partite_analizzate = []
 
@@ -71,8 +70,6 @@ try:
         ospite = away_team.get('shortName') or away_team.get('name', 'Ospite')
         
         standings_map = classifiche_cache.get(comp_id, {})
-        
-        # Punto 2: Gestione sicura dati mancanti (fallback neutro per coppe/tornei senza classifica)
         dati_casa = standings_map.get(home_team.get('name'), {"position": 10, "points": 0})
         dati_ospite = standings_map.get(away_team.get('name'), {"position": 10, "points": 0})
         
@@ -105,10 +102,9 @@ try:
             dc = "1X"
             combo = "12 + Over 1.5 Gol"
 
-        # Punto 3: Logica statistica avanzata e basata su metriche reali anziché moduli casuali
+        # Logica statistica avanzata
         lin_cart = round(2.5 + (diff_pos * 0.15), 1)
         lin_tp = round(4.0 + (forza_match * 0.1), 1)
-        lin_tt = round(20.5 + (diff_pos * 0.2), 1)
         lin_co = round(8.5 + (forza_match * 0.12), 1)
 
         is_rinviata = status_match in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
@@ -117,7 +113,7 @@ try:
             "casa": casa, "ospite": ospite,
             "status": status_match, "is_rinviata": is_rinviata,
             "lin_cartellini": lin_cart, "lin_tp": lin_tp,
-            "lin_tt": lin_tt, "lin_corner": lin_co,
+            "lin_corner": lin_co,
             "dc": dc, "combo": combo,
             "confidence": 0 if is_rinviata else confidence, 
             "fascia": fascia, "priority": priority
@@ -127,61 +123,69 @@ try:
     partite_analizzate.sort(key=lambda x: (x['priority'], -x['confidence']))
 
     # ==========================================
-    # 📄 PUNTO 4: GENERAZIONE DEL REPORT PDF
+    # 📄 GENERAZIONE DEL REPORT PDF (CON 3 COLONNE DISTINTE)
     # ==========================================
-    doc = SimpleDocTemplate(pdf_filename, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    doc = SimpleDocTemplate(pdf_filename, pagesize=letter, rightMargin=25, leftMargin=25, topMargin=30, bottomMargin=30)
     elements = []
     styles = getSampleStyleSheet()
 
     # Stili personalizzati
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1A365D'), spaceAfter=6, alignment=1)
-    subtitle_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor('#4A5568'), spaceAfter=15, alignment=1)
-    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontSize=12, textColor=colors.HexColor('#2B6CB0'), spaceBefore=10, spaceAfter=6)
-    cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#2D3748'))
-    header_cell_style = ParagraphStyle('HeaderCellStyle', parent=styles['Normal'], fontSize=9, textColor=colors.white, fontName='Helvetica-Bold')
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#1A365D'), spaceAfter=4, alignment=1)
+    subtitle_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#4A5568'), spaceAfter=12, alignment=1)
+    cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#2D3748'))
+    header_cell_style = ParagraphStyle('HeaderCellStyle', parent=styles['Normal'], fontSize=8, textColor=colors.white, fontName='Helvetica-Bold')
 
     elements.append(Paragraph(f"<b>REPORT PRONOSTICI & ANALISI STRUTTURALE</b>", title_style))
-    elements.append(Paragraph(f"Data di generazione: {oggi} | Software Engine v2.0", subtitle_style))
-    elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#2B6CB0'), spaceAfter=15))
+    elements.append(Paragraph(f"Data di generazione: {oggi} | Software Engine v2.1", subtitle_style))
+    elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#2B6CB0'), spaceAfter=12))
 
-    # Creazione Tabella dei Match Analizzati per il PDF
+    # Creazione Tabella con 7 Colonne (Match, Confidenza, Combo, DC, Cart, TP, Corner)
     table_data = [[
         Paragraph("<b>Match</b>", header_cell_style),
-        Paragraph("<b>Fascia / Conf.</b>", header_cell_style),
+        Paragraph("<b>Conf.</b>", header_cell_style),
         Paragraph("<b>Combo Consigliata</b>", header_cell_style),
         Paragraph("<b>DC</b>", header_cell_style),
-        Paragraph("<b>Linee (Cart/TP/Corner)</b>", header_cell_style)
+        Paragraph("<b>Cart.</b>", header_cell_style),
+        Paragraph("<b>T.P.</b>", header_cell_style),
+        Paragraph("<b>Corner</b>", header_cell_style)
     ]]
 
-    for m in partite_analizzate[:15]: # Includiamo fino a 15 partite nel PDF pulito
+    for m in partite_analizzate[:15]: 
         if m['is_rinviata']:
             match_str = f"{m['casa']} - {m['ospite']} (Rinviata)"
             conf_str = "⏳ Rinviata"
             combo_str = "-"
             dc_str = "-"
-            stats_str = "-"
+            cart_str = "-"
+            tp_str = "-"
+            co_str = "-"
         else:
             match_str = f"{m['casa']} vs {m['ospite']}"
             conf_str = f"{m['fascia']} ({m['confidence']}%)"
             combo_str = m['combo']
             dc_str = m['dc']
-            stats_str = f"C: >{m['lin_cartellini']} | T: >{m['lin_tp']} | Co: >{m['lin_corner']}"
+            cart_str = f"> {m['lin_cartellini']}"
+            tp_str = f"> {m['lin_tp']}"
+            co_str = f"> {m['lin_corner']}"
 
         table_data.append([
             Paragraph(match_str, cell_style),
             Paragraph(conf_str, cell_style),
             Paragraph(combo_str, cell_style),
             Paragraph(dc_str, cell_style),
-            Paragraph(stats_str, cell_style)
+            Paragraph(cart_str, cell_style),
+            Paragraph(tp_str, cell_style),
+            Paragraph(co_str, cell_style)
         ])
 
-    t = Table(table_data, colWidths=[130, 85, 120, 45, 120])
+    # Larghezze distribuite su una larghezza totale di 562 punti (margini inclusi sul foglio letter)
+    t = Table(table_data, colWidths=[130, 75, 115, 35, 55, 55, 57])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2B6CB0')),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F7FAFC')]),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E0'))
     ]))
@@ -199,7 +203,7 @@ try:
         files = {'document': pdf_file}
         payload = {
             "chat_id": CHAT_ID,
-            "caption": f"📊 *Ecco il report PDF con i pronostici e le analisi statistiche del {oggi}* 🚀"
+            "caption": f"📊 *Ecco il report PDF dettagliato con le linee separate del {oggi}* 🚀"
         }
         res_tg = requests.post(telegram_url, data=payload, files=files)
         
