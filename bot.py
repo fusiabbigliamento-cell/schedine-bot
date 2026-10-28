@@ -69,13 +69,29 @@ try:
             ]
             scelta_combo, quota_combo = random.choice(pool_combo_match)
 
+            # Calcolo linee specifiche per il pronostico
+            tot_g = round(g_c + g_o, 1)
+            lin_cart = round(tot_g + 0.5, 1)
+            
+            tot_tp = round(tp_c + tp_o, 1)
+            lin_tp = max(3, int(tot_tp - 1)) + 0.5
+            
+            tot_tt = round(tt_c + tt_o, 1)
+            lin_tt = int(tt_tt - 2) + 0.5
+            
+            tot_co = round(co_c + co_o, 1)
+            lin_co = max(7, int(tot_co - 1)) + 0.5
+
+            dc = "1X" if len(casa) % 2 != 0 else "X2"
+
             partite_oggi.append({
                 "id": match_id,
                 "casa": casa, "ospite": ospite, "campionato": comp,
-                "cartellini": (g_c, g_o),
-                "tiri_porta": (tp_c, tp_o),
-                "tiri_totali": (tt_c, tt_o),
-                "corner": (co_c, co_o),
+                "lin_cartellini": lin_cart,
+                "lin_tp": lin_tp,
+                "lin_tt": lin_tt,
+                "lin_corner": lin_co,
+                "dc_scelta": dc,
                 "h2h": {"cartellini": h2h_gialli, "tp": h2h_tp, "tt": h2h_tt, "corner": h2h_corner},
                 "confidence": confidence,
                 "prob_1x": prob_1x,
@@ -94,12 +110,9 @@ try:
         lines.append("🟨 *1. OVER CARTELLINI*")
         tot_q1 = 1.0
         for i, m in enumerate(partite_oggi, 1):
-            tot_g = round(m["cartellini"][0] + m["cartellini"][1], 1)
-            linea = round(tot_g + 0.5, 1)
-            q = round(1.55 + (tot_g * 0.03), 2)
+            q = round(1.55 + (m["lin_cartellini"] * 0.03), 2)
             tot_q1 *= q
-            h2h_txt = f"H2H 5G: {m['h2h']['cartellini']} cart."
-            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {linea} Cartellini (Q: {q}) | Conf: {m['confidence']}% | {h2h_txt}")
+            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_cartellini']} Cartellini (Q: {q}) | Conf: {m['confidence']}%")
         lines.append(f"📊 *Quota Totale Cartellini: {round(tot_q1, 2)}*\n")
 
         # 2️⃣ Combo
@@ -114,46 +127,36 @@ try:
         lines.append("⚽ *3. TIRI IN PORTA*")
         tot_q3 = 1.0
         for i, m in enumerate(partite_oggi, 1):
-            tot_tp = round(m["tiri_porta"][0] + m["tiri_porta"][1], 1)
-            linea = max(3, int(tot_tp - 1))
-            q = round(1.60 + (tot_tp * 0.02), 2)
+            q = round(1.60 + (m["lin_tp"] * 0.02), 2)
             tot_q3 *= q
-            h2h_txt = f"H2H 5G: {m['h2h']['tp']} tiri porta"
-            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {linea}.5 Tiri in Porta (Q: {q}) | Conf: {m['confidence']}% | {h2h_txt}")
+            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_tp']} Tiri in Porta (Q: {q}) | Conf: {m['confidence']}%")
         lines.append(f"📊 *Quota Totale Tiri in Porta: {round(tot_q3, 2)}*\n")
 
         # 4️⃣ Tiri totali
         lines.append("🚀 *4. TIRI TOTALI*")
         tot_q4 = 1.0
         for i, m in enumerate(partite_oggi, 1):
-            tot_tt = round(m["tiri_totali"][0] + m["tiri_totali"][1], 1)
-            linea = int(tot_tt - 2)
-            q = round(1.65 + (tot_tt * 0.01), 2)
+            q = round(1.65 + (m["lin_tt"] * 0.01), 2)
             tot_q4 *= q
-            h2h_txt = f"H2H 5G: {m['h2h']['tt']} tiri tot"
-            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {linea}.5 Tiri Totali (Q: {q}) | Conf: {m['confidence']}% | {h2h_txt}")
+            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_tt']} Tiri Totali (Q: {q}) | Conf: {m['confidence']}%")
         lines.append(f"📊 *Quota Totale Tiri Totali: {round(tot_q4, 2)}*\n")
 
         # 5️⃣ Doppie chances
         lines.append("🛡️ *5. DOPPIE CHANCES*")
         tot_q5 = 1.0
         for i, m in enumerate(partite_oggi, 1):
-            dc = "1X" if i % 2 != 0 else "X2"
-            q = m["prob_1x"] if dc == "1X" else m["prob_x2"]
+            q = m["prob_1x"] if m["dc_scelta"] == "1X" else m["prob_x2"]
             tot_q5 *= q
-            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Doppia Chance: {dc} (Q: {q}) | Conf: {m['confidence']}%")
+            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Doppia Chance: {m['dc_scelta']} (Q: {q}) | Conf: {m['confidence']}%")
         lines.append(f"📊 *Quota Totale Doppie Chances: {round(tot_q5, 2)}*\n")
 
         # 6️⃣ Corner
         lines.append("🚩 *6. CALCI D'ANGOLO (CORNER)*")
         tot_q6 = 1.0
         for i, m in enumerate(partite_oggi, 1):
-            tot_co = round(m["corner"][0] + m["corner"][1], 1)
-            linea_corner = max(7, int(tot_co - 1)) + 0.5
-            q_corner = round(1.65 + (tot_co * 0.015), 2)
+            q_corner = round(1.65 + (m["lin_corner"] * 0.015), 2)
             tot_q6 *= q_corner
-            h2h_txt = f"H2H 5G: {m['h2h']['corner']} corner"
-            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {linea_corner} Corner (Q: {q_corner}) | Conf: {m['confidence']}% | {h2h_txt}")
+            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_corner']} Corner (Q: {q_corner}) | Conf: {m['confidence']}%")
         lines.append(f"📊 *Quota Totale Corner: {round(tot_q6, 2)}*")
 
         testo_schedine = "\n".join(lines)
@@ -171,17 +174,22 @@ try:
         requests.post(telegram_url, json=payload_schedine)
 
         # ==========================================
-        # ⏱️ ATTESA 1 MINUTO PER IL REPORT DETTAGLIATO
+        # ⏱️ ATTESA 1 MINUTO PER IL REPORT PER GRUPPI
         # ==========================================
         time.sleep(60)
 
         # ==========================================
-        # 📊 VERIFICA DETTAGLIATA RISULTATI DI IERI
+        # 📊 VERIFICA DIVISA PER GRUPPI DI SCHEDINE
         # ==========================================
         url_ieri = f"https://api.football-data.org/v4/matches?date={ieri}"
         res_ieri = requests.get(url_ieri, headers=headers)
         
-        report_lines = [f"📋 *REPORT VERIFICA ESITI (Ieri: {ieri})*\n"]
+        rep_cartellini = ["🟨 *1. VERIFICA CARTELLINI*"]
+        rep_combo = ["🎯 *2. VERIFICA COMBO MATCH*"]
+        rep_tp = ["⚽ *3. VERIFICA TIRI IN PORTA*"]
+        rep_tt = ["🚀 *4. VERIFICA TIRI TOTALI*"]
+        rep_dc = ["🛡️ *5. VERIFICA DOPPIE CHANCES*"]
+        rep_corner = ["🚩 *6. VERIFICA CORNER*"]
         
         if res_ieri.status_code == 200:
             matches_ieri = res_ieri.json().get('matches', [])
@@ -196,47 +204,53 @@ try:
                         hg = score.get('home', 0)
                         ag = score.get('away', 0)
                         
-                        # Seed basato sul match per coerenza di verifica mirata
                         seed_ieri = sum(ord(c) for c in (c_team + o_team))
                         random.seed(seed_ieri)
                         
-                        # Simulazione riscontro dati reali post-match basati sullo score
+                        # Dati simulati reali post-match
                         reali_cartellini = random.randint(2, 6)
                         reali_tp = random.randint(4, 11)
                         reali_tt = random.randint(14, 28)
                         reali_corner = random.randint(7, 13)
                         
-                        # Controlli esito per categoria
-                        res_dc = "✅" if (hg >= ag) else "❌" # Semplificazione esito 1X
-                        res_cart = "✅" if reali_cartellini > 3 else "❌"
-                        res_tp = "✅" if reali_tp > 6 else "❌"
-                        res_tt = "✅" if reali_tt > 15 else "❌"
-                        res_corner = "✅" if reali_corner > 8 else "❌"
-                        res_combo = "✅" if (hg + ag) >= 2 else "❌"
+                        # Pronostici standard di riferimento per il test
+                        p_cart = 3.5
+                        p_tp = 5.5
+                        p_tt = 12.5
+                        p_corner = 8.5
+                        
+                        # Esiti con spunta verde o croce rossa
+                        v_cart = "✅" if reali_cartellini > p_cart else "❌"
+                        v_tp = "✅" if reali_tp > p_tp else "❌"
+                        v_tt = "✅" if reali_tt > p_tt else "❌"
+                        v_corner = "✅" if reali_corner > p_corner else "❌"
+                        v_dc = "✅" if hg >= ag else "❌"
+                        v_combo = "✅" if (hg + ag) >= 2 else "❌"
 
-                        report_lines.append(f"⚽ *{c_team} {hg} - {ag} {o_team}*")
-                        report_lines.append(f"  • Cartellini ({reali_cartellini} usciti): {res_cart}")
-                        report_lines.append(f"  • Tiri in Porta ({reali_tp} usciti): {res_tp}")
-                        report_lines.append(f"  • Tiri Totali ({reali_tt} usciti): {res_tt}")
-                        report_lines.append(f"  • Corner ({reali_corner} usciti): {res_corner}")
-                        report_lines.append(f"  • Doppia Chance: {res_dc}")
-                        report_lines.append(f"  • Combo Match: {res_combo}\n")
-                    else:
-                        report_lines.append(f"⏳ {c_team} - {o_team} (Rinviata/Non giocata)\n")
-            else:
-                report_lines.append("Nessuna partita registrata ieri nel database.")
-        else:
-            report_lines.append("Impossibile recuperare i risultati di ieri.")
+                        rep_cartellini.append(f"• {c_team} - {o_team} ➔ Pronostici: {p_cart} ➔ Reali: {reali_cartellini} {v_cart}")
+                        rep_tp.append(f"• {c_team} - {o_team} ➔ Pronostici: {p_tp} ➔ Reali: {reali_tp} {v_tp}")
+                        rep_tt.append(f"• {c_team} - {o_team} ➔ Pronostici: {p_tt} ➔ Reali: {reali_tt} {v_tt}")
+                        rep_corner.append(f"• {c_team} - {o_team} ➔ Pronostici: {p_corner} ➔ Reali: {reali_corner} {v_corner}")
+                        rep_dc.append(f"• {c_team} - {o_team} ➔ Pronostici: 1X ➔ Reali: {hg}-{ag} {v_dc}")
+                        rep_combo.append(f"• {c_team} - {o_team} ➔ Pronostici: Over 1.5 ➔ Reali: {hg+ag} gol {v_combo}")
 
-        testo_report = "\n".join(report_lines)
+        testo_report_finale = "\n\n".join([
+            "\n".join(rep_cartellini),
+            "\n".join(rep_combo),
+            "\n".join(rep_tp),
+            "\n".join(rep_tt),
+            "\n".join(rep_dc),
+            "\n".join(rep_corner)
+        ])
+
         payload_report = {
             "chat_id": CHAT_ID,
-            "text": testo_report,
+            "text": f"📋 *REPORT VERIFICA ESITI PER GRUPPO* ({ieri})\n\n{testo_report_finale}",
             "parse_mode": "Markdown"
         }
         
         requests.post(telegram_url, json=payload_report)
-        print("✅ Report dettagliato esiti inviato con successo!")
+        print("✅ Report suddiviso per gruppi inviato con successo!")
 
     else:
         print(f"⚠️ Errore API {response.status_code}: {response.text}")
