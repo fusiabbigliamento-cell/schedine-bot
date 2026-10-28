@@ -3,7 +3,7 @@ name: Genera Schedine Giornaliere
 on:
   schedule:
     - cron: '0 8 * * *' # Tutti i giorni alle 08:00 del mattino
-  workflow_dispatch: # Permette di avviarlo manualmente quando vuoi
+  workflow_dispatch: # Permette l'avvio manuale
 
 jobs:
   run-bot:
@@ -18,7 +18,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests reportlab
 
       - name: Run script
         env:
