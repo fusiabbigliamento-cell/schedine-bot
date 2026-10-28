@@ -42,24 +42,23 @@ try:
         
         confidence = random.randint(15, 95)
         
-        # Sostituzione delle fasce con i semafori
         if confidence >= 70:
-            fascia = "🟢 SEMAFORO VERDE"
+            fascia = "🟢 VERDE"
             priority = 1
         elif confidence >= 40:
-            fascia = "🟡 SEMAFORO GIALLO"
+            fascia = "🟡 GIALLO"
             priority = 2
         else:
-            fascia = "🔴 SEMAFORO ROSSO"
+            fascia = "🔴 ROSSO"
             priority = 3
             
         prob_1x = round(random.uniform(1.18, 1.42), 2)
         prob_x2 = round(random.uniform(1.25, 1.55), 2)
         
         pool_combo = [
-            ("1X + Over 1.5 Gol", 1.48), ("X2 + Over 1.5 Gol", 1.55),
-            ("Goal SI + Over 1.5", 1.72), ("12 + Over 1.5 Gol", 1.38),
-            ("1X + Under 3.5 Gol", 1.42), ("X2 + Under 3.5 Gol", 1.46)
+            ("1X + Ov 1.5", 1.48), ("X2 + Ov 1.5", 1.55),
+            ("Gol + Ov 1.5", 1.72), ("12 + Ov 1.5", 1.38),
+            ("1X + Un 3.5", 1.42), ("X2 + Un 3.5", 1.46)
         ]
         scelta_combo, quota_combo = random.choice(pool_combo)
 
@@ -96,69 +95,64 @@ try:
     migliori_15 = partite_oggi[:15]
 
     # ==========================================
-    # 📝 COSTRUZIONE DELLE 6 SCHEDINE A GRUPPI
+    # 📝 COSTRUZIONE DELLE 6 SCHEDINE COMPATTE
     # ==========================================
     lines = []
-    lines.append(f"🎯 *6 SCHEDINE GIORNALIERE (TOP 15 MONDIALI)* ({oggi})\n")
+    lines.append(f"🎯 *6 SCHEDINE TOP 15* ({oggi})\n")
 
-    def format_riga(m, pronostico_txt, quota):
+    def format_riga(m, prono_txt, quota):
         if m['is_rinviata']:
-            return f"{m['casa']} - {m['ospite']} ➔ ⏳ *In attesa (Rinviata/Sospesa)* | {m['fascia']}"
+            return f"• {m['casa']} - {m['ospite']} ➔ ⏳ In attesa | {m['fascia']}"
         else:
-            return f"{m['casa']} - {m['ospite']} ➔ {pronostico_txt} | *Quota: {quota}* | {m['fascia']} ({m['confidence']}%)"
+            return f"• {m['casa']} - {m['ospite']} ➔ {prono_txt} | Q: {quota} | {m['fascia']}"
 
     # 1. Cartellini
-    lines.append("🟨 *1. SCHEDINA CARTELLINI*")
+    lines.append("🟨 *1. CARTELLINI*")
     tot_q1 = 1.0
-    for i, m in enumerate(migliori_15, 1):
+    for m in migliori_15:
         tot_q1 *= m['q_cart']
-        prono = f"Over {m['lin_cartellini']} Cartellini"
-        lines.append(f"{i}. {format_riga(m, prono, m['q_cart'])}")
-    lines.append(f"📊 *Quota Totale Cartellini: {round(tot_q1, 2)}*\n")
+        lines.append(format_riga(m, f"Ov {m['lin_cartellini']} Cart.", m['q_cart']))
+    lines.append(f"📊 *Tot. Cartellini: {round(tot_q1, 2)}*\n")
 
     # 2. Combo Match
-    lines.append("🎯 *2. SCHEDINA COMBO MATCH*")
+    lines.append("🎯 *2. COMBO MATCH*")
     tot_q2 = 1.0
-    for i, m in enumerate(migliori_15, 1):
+    for m in migliori_15:
         tot_q2 *= m['q_combo']
-        lines.append(f"{i}. {format_riga(m, m['combo'], m['q_combo'])}")
-    lines.append(f"📊 *Quota Totale Combo: {round(tot_q2, 2)}*\n")
+        lines.append(format_riga(m, m['combo'], m['q_combo']))
+    lines.append(f"📊 *Tot. Combo: {round(tot_q2, 2)}*\n")
 
     # 3. Tiri in Porta
-    lines.append("⚽ *3. SCHEDINA TIRI IN PORTA*")
+    lines.append("⚽ *3. TIRI IN PORTA*")
     tot_q3 = 1.0
-    for i, m in enumerate(migliori_15, 1):
+    for m in migliori_15:
         tot_q3 *= m['q_tp']
-        prono = f"Over {m['lin_tp']} Tiri in Porta"
-        lines.append(f"{i}. {format_riga(m, prono, m['q_tp'])}")
-    lines.append(f"📊 *Quota Totale Tiri in Porta: {round(tot_q3, 2)}*\n")
+        lines.append(format_riga(m, f"Ov {m['lin_tp']} T.Porta", m['q_tp']))
+    lines.append(f"📊 *Tot. Tiri Porta: {round(tot_q3, 2)}*\n")
 
     # 4. Tiri Totali
-    lines.append("🚀 *4. SCHEDINA TIRI TOTALI*")
+    lines.append("🚀 *4. TIRI TOTALI*")
     tot_q4 = 1.0
-    for i, m in enumerate(migliori_15, 1):
+    for m in migliori_15:
         tot_q4 *= m['q_tt']
-        prono = f"Over {m['lin_tt']} Tiri Totali"
-        lines.append(f"{i}. {format_riga(m, prono, m['q_tt'])}")
-    lines.append(f"📊 *Quota Totale Tiri Totali: {round(tot_q4, 2)}*\n")
+        lines.append(format_riga(m, f"Ov {m['lin_tt']} T.Tot", m['q_tt']))
+    lines.append(f"📊 *Tot. Tiri Totali: {round(tot_q4, 2)}*\n")
 
     # 5. Doppie Chances
-    lines.append("🛡️ *5. SCHEDINA DOPPIE CHANCES*")
+    lines.append("🛡️ *5. DOPPIE CHANCES*")
     tot_q5 = 1.0
-    for i, m in enumerate(migliori_15, 1):
+    for m in migliori_15:
         tot_q5 *= m['q_dc']
-        prono = f"Doppia Chance: {m['dc']}"
-        lines.append(f"{i}. {format_riga(m, prono, m['q_dc'])}")
-    lines.append(f"📊 *Quota Totale Doppie Chances: {round(tot_q5, 2)}*\n")
+        lines.append(format_riga(m, f"DC {m['dc']}", m['q_dc']))
+    lines.append(f"📊 *Tot. Doppie Chances: {round(tot_q5, 2)}*\n")
 
     # 6. Corner
-    lines.append("🚩 *6. SCHEDINA CORNER*")
+    lines.append("🚩 *6. CORNER*")
     tot_q6 = 1.0
-    for i, m in enumerate(migliori_15, 1):
+    for m in migliori_15:
         tot_q6 *= m['q_corner']
-        prono = f"Over {m['lin_corner']} Corner"
-        lines.append(f"{i}. {format_riga(m, prono, m['q_corner'])}")
-    lines.append(f"📊 *Quota Totale Corner: {round(tot_q6, 2)}*")
+        lines.append(format_riga(m, f"Ov {m['lin_corner']} Corner", m['q_corner']))
+    lines.append(f"📊 *Tot. Corner: {round(tot_q6, 2)}*")
 
     testo_finale = "\n".join(lines)
 
@@ -171,7 +165,7 @@ try:
     
     res = requests.post(telegram_url, json=payload)
     if res.status_code == 200:
-        print("✅ Schedine con semafori inviate con successo su Telegram!")
+        print("✅ Schedine compatte inviate con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res.text}")
 
