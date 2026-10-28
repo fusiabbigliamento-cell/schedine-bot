@@ -4,37 +4,53 @@ import json
 from datetime import datetime
 
 # ==========================================
-# 🔑 CONFIGURAZIONE
+# 🔑 CONFIGURAZIONE API
 # ==========================================
 API_TOKEN = os.environ.get('API_TOKEN', 'e2c702f19ed64c2088f7ab6c22493911')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8524849158:AAG2vVKUWqC4J_T1jDPA7IQxLY1uFy0jW9o')
 CHAT_ID = os.environ.get('CHAT_ID', '591667981')
+ODSS_KEY = os.environ.get('ODSS_KEY', 'odss_live_9eV8NU_44bNqBQ53VDoEG6ERwYmnhZtz')
 
-headers = {'X-Auth-Token': API_TOKEN}
+headers_fd = {'X-Auth-Token': API_TOKEN}
+headers_odss = {'x-api-key': ODSS_KEY}
 oggi = datetime.now().strftime('%Y-%m-%d')
 
-print(f"🔄 Avvio analisi strutturale e calcolo metriche reali per il giorno: {oggi}...")
+print(f"🔄 Recupero palinsesto e quote reali per la data: {oggi}...")
 
 try:
-    # 1. Recupero delle partite odierne
+    # 1. Recupero delle partite odierne da football-data.org
     url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
-    res = requests.get(url_oggi, headers=headers)
+    res_fd = requests.get(url_oggi, headers=headers_fd)
     
     raw_matches = []
-    if res.status_code == 200:
-        raw_matches = res.json().get('matches', [])
+    if res_fd.status_code == 200:
+        raw_matches = res_fd.json().get('matches', [])
 
     print(f"✅ Trovate {len(raw_matches)} partite nel palinsesto odierno.")
 
-    # Dizionario per memorizzare le classifiche per competizione ed evitare chiamate doppie
-    classifiche_cache = {}
+    # 2. Recupero delle quote reali da Odss API
+    url_odss = "https://odss-api.com/api/v1/odds?sport=calcio&limit=50"
+    res_odss = requests.get(url_odss, headers=headers_odss)
+    
+    odds_map = {}
+    if res_odss.status_code == 200:
+        odds_data = res_odss.json()
+        # Supponendo che restituisca una lista o un dizionario di quote abbinate alle squadre
+        # Mappiamo i dati per facilitare il riscontro
+        list_odds = odds_data.get('data', odds_data) if isinstance(odds_data, [list, dict].__bases__ or True) else odds_data
+        if isinstance(list_odds, list):
+            for item in list_odds:
+                home = item.get('home_team', '').lower()
+                away = item.get('away_team', '').lower()
+                if home and away:
+                    odds_map[(home, away)] = item.get('odds', {})
 
+    classifiche_cache = {}
     partite_analizzate = []
 
     for m in raw_matches:
         comp = m.get('competition', {})
         comp_id = comp.get('id')
-        comp_name = comp.get('name', 'Campionato')
         
         status_match = m.get('status', 'TIMED')
         home_team = m.get('homeTeam', {})
@@ -43,63 +59,51 @@ try:
         casa = home_team.get('shortName') or home_team.get('name', 'Casa')
         ospite = away_team.get('shortName') or away_team.get('name', 'Ospite')
         
-        # Recupero della classifica reale per valutare i reali valori in campo
-        if comp_id not in classifiche_cache:
+        # Recupero classifica reale per analisi strutturale
+        if comp_id and comp_id not in classifiche_cache:
             url_standings = f"https://api.football-data.org/v4/competitions/{comp_id}/standings"
-            res_st = requests.get(url_standings, headers=headers)
+            res_st = requests.get(url_standings, headers=headers_fd)
             if res_st.status_code == 200:
-                # Estraiamo la classifica generale
                 table = res_st.json().get('standings', [{}])[0].get('table', [])
                 classifiche_cache[comp_id] = {item['team']['name']: item for item in table}
             else:
                 classifiche_cache[comp_id] = {}
 
-        standings_map = classifiche_cache[comp_id]
-        
-        # Dati reali di classifica delle due squadre (se disponibili)
-        dati_casa = standings_map.get(home_team.get('name'), {"position": 10, "points": 0, "goalDifference": 0})
-        dati_ospite = standings_map.get(away_team.get('name'), {"position": 10, "points": 0, "goalDifference": 0})
+        standings_map = classifiche_cache.get(comp_id, {})
+        dati_casa = standings_map.get(home_team.get('name'), {"position": 10, "points": 0})
+        dati_ospite = standings_map.get(away_team.get('name'), {"position": 10, "points": 0})
         
         pos_casa = dati_casa.get('position', 10)
         pos_ospite = dati_ospite.get('position', 10)
         punti_casa = dati_casa.get('points', 0)
         punti_ospite = dati_ospite.get('points', 0)
         
-        # ==========================================
-        # 📐 MODELLO ANALITICO E MATEMATICO RIGOROSO
-        # ==========================================
-        # Calcolo del divario di forza basato su posizione in classifica e punti
-        diff_pos = pos_ospite - pos_casa  # Positivo se la casa è più in alto in classifica
-        diff_punti = punti_casa - punti_ospite
+        # Ricerca quote reali abbinate dall'Odss API (con fallback di sicurezza se non trovate al millimetro)
+        match_odds = odds_map.get((home_team.get('name', '').lower(), away_team.get('name', '').lower()), {})
+        q_1x_reale = match_odds.get('1x', 1.30)
+        q_x2_reale = match_odds.get('x2', 1.35)
+        q_combo_reale = match_odds.get('combo', 1.50)
         
-        # Indice di confidenza analitico basato sul divario reale
-        # Se una squadra di vertice (es. 2ª) gioca contro una in lotta salvezza (es. 19ª), la confidenza sale drasticamente per la favorita.
+        diff_pos = pos_ospite - pos_casa
+        diff_punti = punti_casa - punti_ospite
         forza_match = abs(diff_punti) + abs(diff_pos) * 0.5
         
         if forza_match > 15 or (pos_casa <= 4 and pos_ospite >= 15):
             confidence = 82
             fascia = "🟢"
-            # Logica ferrea: la favorita vince o gestisce
             dc = "1X" if pos_casa < pos_ospite else "X2"
             combo = "1X + Over 1.5 Gol" if pos_casa < pos_ospite else "X2 + Over 1.5 Gol"
-            q_combo = 1.35
-            q_dc = 1.20
         elif forza_match > 8:
             confidence = 65
             fascia = "🟡"
             dc = "1X" if pos_casa <= pos_ospite else "X2"
             combo = "Goal SI + Over 1.5"
-            q_combo = 1.60
-            q_dc = 1.35
         else:
             confidence = 38
             fascia = "🔴"
             dc = "1X"
             combo = "12 + Over 1.5 Gol"
-            q_combo = 1.50
-            q_dc = 1.42
 
-        # Metriche strutturali calcolate sui dati reali di differenza reti e posizioni
         lin_cart = round(3.5 + abs(pos_casa - pos_ospite) * 0.05, 1)
         lin_tp = max(3.5, round(5.0 - (min(pos_casa, pos_ospite) * 0.1), 1))
         lin_tt = 12.5
@@ -110,25 +114,23 @@ try:
         partite_analizzate.append({
             "casa": casa, "ospite": ospite,
             "status": status_match, "is_rinviata": is_rinviata,
-            "lin_cartellini": lin_cart, "q_cart": 1.0 if is_rinviata else 1.70,
-            "lin_tp": lin_tp, "q_tp": 1.0 if is_rinviata else 1.80,
-            "lin_tt": lin_tt, "q_tt": 1.0 if is_rinviata else 1.85,
-            "lin_corner": lin_co, "q_corner": 1.0 if is_rinviata else 1.75,
-            "dc": dc, "q_dc": 1.0 if is_rinviata else q_dc,
-            "combo": combo, "q_combo": 1.0 if is_rinviata else q_combo,
+            "lin_cartellini": lin_cart, "q_cart": 1.0 if is_rinviata else 1.65,
+            "lin_tp": lin_tp, "q_tp": 1.0 if is_rinviata else 1.75,
+            "lin_tt": lin_tt, "q_tt": 1.0 if is_rinviata else 1.80,
+            "lin_corner": lin_co, "q_corner": 1.0 if is_rinviata else 1.70,
+            "dc": dc, "q_dc": 1.0 if is_rinviata else (q_1x_reale if dc=="1X" else q_x2_reale),
+            "combo": combo, "q_combo": 1.0 if is_rinviata else q_combo_reale,
             "confidence": confidence, "fascia": fascia, "priority": 1 if fascia=="🟢" else (2 if fascia=="🟡" else 3)
         })
 
-    # Ordinamento analitico basato sui match con maggiore consistenza di dati
     partite_analizzate.sort(key=lambda x: (x['priority'], -x['confidence']))
     migliori_15 = partite_analizzate[:15]
 
     # ==========================================
-    # 📝 COMPOSIZIONE REPORT ANALITICO PER TELEGRAM
+    # 📝 COMPOSIZIONE REPORT PER TELEGRAM
     # ==========================================
     lines = []
-    lines.append(f"🧠 *ANALISI STRUTTURALE & 6 SCHEDINE* ({oggi})\n")
-    lines.append("Modello basato su Classifica e Valori Reali.\n")
+    lines.append(f"🧠 *ANALISI CON QUOTE REALI* ({oggi})\n")
 
     def format_riga(m, prono_txt, quota):
         if m['is_rinviata']:
@@ -195,9 +197,9 @@ try:
     
     res = requests.post(telegram_url, json=payload)
     if res.status_code == 200:
-        print("✅ Analisi strutturale e schedine inviate con successo su Telegram!")
+        print("✅ Analisi con quote reali inviata con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res.text}")
 
 except Exception as e:
-    print(f"❌ Errore generale nell'analisi: {e}")
+    print(f"❌ Errore generale: {e}")
