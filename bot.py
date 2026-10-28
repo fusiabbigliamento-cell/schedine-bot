@@ -136,4 +136,42 @@ try:
             ('ALIGN', (0,0), (-1,-1), 'LEFT'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E0E0E0')),
-            ('ROWBACKGROUNDS', (0,1), (-1,-1),
+            ('BACKGROUND', (0,1), (-1,-1), colors.white),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 8))
+
+    crea_tabella_categoria("🟨 1. OVER CARTELLINI", "lin_cartellini", "Cartellini")
+    crea_tabella_categoria("🎯 2. COMBO MATCH", "combo")
+    crea_tabella_categoria("⚽ 3. TIRI IN PORTA", "lin_tp", "Tiri in Porta")
+    crea_tabella_categoria("🚀 4. TIRI TOTALI", "lin_tt", "Tiri Totali")
+    crea_tabella_categoria("🛡️ 5. DOPPIE CHANCES", "dc")
+    crea_tabella_categoria("🚩 6. CALCI D'ANGOLO (CORNER)", "lin_corner", "Corner")
+
+    doc.build(story)
+    print(f"✅ PDF giornaliero '{pdf_filename}' generato correttamente.")
+
+    # ==========================================
+    # 🚀 INVIO DEL PDF SU TELEGRAM
+    # ==========================================
+    url_document = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    caption_txt = f"📅 *REPORT GIORNALIERO SCHEDINE* ({oggi})\nPartite odierne ordinate per Oro 🥇, Argento 🥈 e Bronzo 🥉."
+    
+    with open(pdf_filename, 'rb') as doc_file:
+        files = {'document': doc_file}
+        data = {
+            'chat_id': CHAT_ID,
+            'caption': caption_txt,
+            'parse_mode': 'Markdown'
+        }
+        res_send = requests.post(url_document, data=data, files=files)
+        
+    if res_send.status_code == 200:
+        print("✅ PDF giornaliero inviato con successo su Telegram!")
+    else:
+        print(f"⚠️ Errore invio Telegram: {res_send.text}")
+
+except Exception as e:
+    print(f"❌ Errore generale: {e}")
