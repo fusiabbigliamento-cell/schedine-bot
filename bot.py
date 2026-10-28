@@ -16,7 +16,6 @@ oggi = datetime.now().strftime('%Y-%m-%d')
 print(f"🔄 Recupero le partite giornaliere per la data: {oggi}...")
 
 try:
-    # Interroghiamo l'endpoint giornaliero per catturare le partite di oggi da tutto il mondo
     url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
     res = requests.get(url_oggi, headers=headers)
     
@@ -24,11 +23,10 @@ try:
     if res.status_code == 200:
         raw_matches = res.json().get('matches', [])
 
-    print(f"✅ Trovate {len(raw_matches)} partite oggi in tutto il palinsesto.")
+    print(f"✅ Trovate {len(raw_matches)} partite nel palinsesto.")
 
     partite_oggi = []
     for m in raw_matches:
-        comp = m.get('competition', {}).get('name', 'Campionato')
         casa = m.get('homeTeam', {}).get('shortName') or m.get('homeTeam', {}).get('name', 'Casa')
         ospite = m.get('awayTeam', {}).get('shortName') or m.get('awayTeam', {}).get('name', 'Ospite')
         
@@ -40,7 +38,6 @@ try:
         tt_c, tt_o = round(random.uniform(11.0, 16.5), 1), round(random.uniform(9.5, 14.5), 1)
         co_c, co_o = round(random.uniform(4.0, 7.0), 1), round(random.uniform(3.5, 6.0), 1)
         
-        # Confidence estesa per coprire tutte e tre le fasce
         confidence = random.randint(15, 95)
         
         if confidence >= 70:
@@ -63,38 +60,90 @@ try:
         ]
         scelta_combo, quota_combo = random.choice(pool_combo)
 
-        lin_cart = round(g_c + g_o + 0.5, 1)
-        lin_tp = max(3, int(tp_c + tp_o - 1)) + 0.5
-        lin_tt = int(tt_c + tt_o - 2) + 0.5
-        lin_co = max(7, int(co_c + co_o - 1)) + 0.5
+        # Arrotondamento per eccesso o difetto delle linee di gioco
+        raw_cart = g_c + g_o + 0.5
+        lin_cart = round(raw_cart * 2) / 2
+        
+        raw_tp = tp_c + tp_o - 0.5
+        lin_tp = max(3.0, round(raw_tp * 2) / 2)
+        
+        raw_tt = tt_c + tt_o - 1.5
+        lin_tt = round(raw_tt * 2) / 2
+        
+        raw_co = co_c + co_o - 0.5
+        lin_co = max(7.0, round(raw_co * 2) / 2)
+        
         dc = "1X" if len(casa) % 2 != 0 else "X2"
+        q_dc = prob_1x if dc == "1X" else prob_x2
 
         partite_oggi.append({
-            "comp": comp, "casa": casa, "ospite": ospite,
-            "lin_cartellini": lin_cart, "lin_tp": lin_tp,
-            "lin_tt": lin_tt, "lin_corner": lin_co,
-            "dc": dc, "combo": scelta_combo, "q_combo": quota_combo,
-            "q_dc": prob_1x if dc == "1X" else prob_x2,
+            "casa": casa, "ospite": ospite,
+            "lin_cartellini": lin_cart, "q_cart": round(1.50 + (lin_cart * 0.04), 2),
+            "lin_tp": lin_tp, "q_tp": round(1.55 + (lin_tp * 0.03), 2),
+            "lin_tt": lin_tt, "q_tt": round(1.60 + (lin_tt * 0.02), 2),
+            "lin_corner": lin_co, "q_corner": round(1.55 + (lin_co * 0.025), 2),
+            "dc": dc, "q_dc": q_dc,
+            "combo": scelta_combo, "q_combo": quota_combo,
             "confidence": confidence, "fascia": fascia, "priority": priority
         })
 
-    # Ordiniamo per priorità fascia (Oro -> Argento -> Bronzo) e prendiamo le prime 15
+    # Ordiniamo per priorità fascia e prendiamo le prime 15
     partite_oggi.sort(key=lambda x: (x['priority'], -x['confidence']))
     migliori_15 = partite_oggi[:15]
 
     # ==========================================
-    # 📝 COSTRUZIONE MESSAGGIO TELEGRAM
+    # 📝 COSTRUZIONE DELLE 6 SCHEDINE A GRUPPI
     # ==========================================
     lines = []
-    lines.append(f"🎯 *TOP 15 PARTITE CONSIGLIATE* ({oggi})\n")
-    lines.append("Classificate per Confidenza (Oro, Argento, Bronzo):\n")
+    lines.append(f"🎯 *6 SCHEDINE GIORNALIERE (TOP 15 PARTITE)* ({oggi})\n")
 
+    # 1. Cartellini
+    lines.append("🟨 *1. SCHEDINA CARTELLINI*")
+    tot_q1 = 1.0
     for i, m in enumerate(migliori_15, 1):
-        lines.append(f"*{i}. [{m['fascia']}] {m['casa']} - {m['ospite']}* ({m['confidence']}%)")
-        lines.append(f"   • Campionato: {m['comp']}")
-        lines.append(f"   • Combo: {m['combo']} (Q: {m['q_combo']})")
-        lines.append(f"   • Cartellini: Over {m['lin_cartellini']} | Tiri Porta: Over {m['lin_tp']}")
-        lines.append("")
+        tot_q1 *= m['q_cart']
+        lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_cartellini']} Cartellini | *Quota: {m['q_cart']}* | {m['fascia']} ({m['confidence']}%)")
+    lines.append(f"📊 *Quota Totale Cartellini: {round(tot_q1, 2)}*\n")
+
+    # 2. Combo Match
+    lines.append("🎯 *2. SCHEDINA COMBO MATCH*")
+    tot_q2 = 1.0
+    for i, m in enumerate(migliori_15, 1):
+        tot_q2 *= m['q_combo']
+        lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ {m['combo']} | *Quota: {m['q_combo']}* | {m['fascia']} ({m['confidence']}%)")
+    lines.append(f"📊 *Quota Totale Combo: {round(tot_q2, 2)}*\n")
+
+    # 3. Tiri in Porta
+    lines.append("⚽ *3. SCHEDINA TIRI IN PORTA*")
+    tot_q3 = 1.0
+    for i, m in enumerate(migliori_15, 1):
+        tot_q3 *= m['q_tp']
+        lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_tp']} Tiri in Porta | *Quota: {m['q_tp']}* | {m['fascia']} ({m['confidence']}%)")
+    lines.append(f"📊 *Quota Totale Tiri in Porta: {round(tot_q3, 2)}*\n")
+
+    # 4. Tiri Totali
+    lines.append("🚀 *4. SCHEDINA TIRI TOTALI*")
+    tot_q4 = 1.0
+    for i, m in enumerate(migliori_15, 1):
+        tot_q4 *= m['q_tt']
+        lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_tt']} Tiri Totali | *Quota: {m['q_tt']}* | {m['fascia']} ({m['confidence']}%)")
+    lines.append(f"📊 *Quota Totale Tiri Totali: {round(tot_q4, 2)}*\n")
+
+    # 5. Doppie Chances
+    lines.append("🛡️ *5. SCHEDINA DOPPIE CHANCES*")
+    tot_q5 = 1.0
+    for i, m in enumerate(migliori_15, 1):
+        tot_q5 *= m['q_dc']
+        lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Doppia Chance: {m['dc']} | *Quota: {m['q_dc']}* | {m['fascia']} ({m['confidence']}%)")
+    lines.append(f"📊 *Quota Totale Doppie Chances: {round(tot_q5, 2)}*\n")
+
+    # 6. Corner
+    lines.append("🚩 *6. SCHEDINA CORNER*")
+    tot_q6 = 1.0
+    for i, m in enumerate(migliori_15, 1):
+        tot_q6 *= m['q_corner']
+        lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_corner']} Corner | *Quota: {m['q_corner']}* | {m['fascia']} ({m['confidence']}%)")
+    lines.append(f"📊 *Quota Totale Corner: {round(tot_q6, 2)}*")
 
     testo_finale = "\n".join(lines)
 
@@ -108,7 +157,7 @@ try:
     
     res = requests.post(telegram_url, json=payload)
     if res.status_code == 200:
-        print("✅ Messaggio con le 15 partite inviato con successo su Telegram!")
+        print("✅ Le 6 schedine con quote dettagliate sono state inviate con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res.text}")
 
