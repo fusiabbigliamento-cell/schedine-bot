@@ -4,7 +4,7 @@ import random
 import time
 from datetime import datetime, timedelta
 
-from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -22,24 +22,18 @@ headers = {'X-Auth-Token': API_TOKEN}
 oggi = datetime.now().strftime('%Y-%m-%d')
 ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 
-print(f"🔄 Recupero partite dai Top 5 Campionati per la data: {oggi}...")
+print(f"🔄 Recupero le partite ESCLUSIVAMENTE per la giornata di oggi: {oggi}...")
 
 try:
     raw_matches = []
+    # Interroghiamo specificando la data odierna per ogni campionato dei Top 5
     for league in TOP_LEAGUES:
         url_league = f"https://api.football-data.org/v4/competitions/{league}/matches?date={oggi}"
         res_l = requests.get(url_league, headers=headers)
         if res_l.status_code == 200:
             raw_matches.extend(res_l.json().get('matches', []))
 
-    # Se non ci sono partite nei top 5 oggi, prendiamo il palinsesto generale
-    if not raw_matches:
-        url_gen = f"https://api.football-data.org/v4/matches?date={oggi}"
-        res_g = requests.get(url_gen, headers=headers)
-        if res_g.status_code == 200:
-            raw_matches = res_g.json().get('matches', [])
-
-    print(f"✅ Trovate {len(raw_matches)} partite da analizzare.")
+    print(f"✅ Trovate {len(raw_matches)} partite in programma oggi nei Top 5 campionati.")
 
     partite_oggi = []
     for m in raw_matches:
@@ -55,13 +49,18 @@ try:
         tt_c, tt_o = round(random.uniform(11.0, 16.5), 1), round(random.uniform(9.5, 14.5), 1)
         co_c, co_o = round(random.uniform(4.0, 7.0), 1), round(random.uniform(3.5, 6.0), 1)
         
-        confidence = random.randint(25, 95)
+        confidence = random.randint(20, 95)
+        
+        # Classificazione in base alla confidence richiesta
         if confidence >= 70:
-            fascia = "🥇 Oro"
+            fascia = "🥇 ORO"
+            priority = 1
         elif confidence >= 40:
-            fascia = "🥈 Argento"
+            fascia = "🥈 ARGENTO"
+            priority = 2
         else:
-            fascia = "🥉 Bronzo"
+            fascia = "🥉 BRONZO"
+            priority = 3
             
         prob_1x = round(random.uniform(1.18, 1.42), 2)
         prob_x2 = round(random.uniform(1.25, 1.55), 2)
@@ -85,96 +84,85 @@ try:
             "lin_tt": lin_tt, "lin_corner": lin_co,
             "dc": dc, "combo": scelta_combo, "q_combo": quota_combo,
             "q_dc": prob_1x if dc == "1X" else prob_x2,
-            "confidence": confidence, "fascia": fascia
+            "confidence": confidence, "fascia": fascia, "priority": priority
         })
 
+    # Ordinamento per priorità fascia (Oro -> Argento -> Bronzo) e poi per confidence decrescente
+    partite_oggi.sort(key=lambda x: (x['priority'], -x['confidence']))
+
     # ==========================================
-    # 📄 GENERAZIONE PDF CON REPORTLAB
+    # 📄 GENERAZIONE PDF GIORNALIERO ORDINATO
     # ==========================================
-    pdf_filename = f"Report_Schedine_{oggi}.pdf"
+    pdf_filename = f"Report_Schedine_Giornaliere_{oggi}.pdf"
     doc = SimpleDocTemplate(pdf_filename, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, leading=22, textColor=colors.HexColor('#1A237E'), alignment=1)
-    subtitle_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontSize=10, leading=12, textColor=colors.gray, alignment=1)
-    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontSize=13, leading=16, textColor=colors.HexColor('#0D47A1'), spaceBefore=12, spaceAfter=6)
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, leading=20, textColor=colors.HexColor('#1A237E'), alignment=1)
+    subtitle_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontSize=9, leading=11, textColor=colors.gray, alignment=1)
+    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontSize=12, leading=15, textColor=colors.HexColor('#0D47A1'), spaceBefore=10, spaceAfter=4)
     cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=8, leading=10)
     cell_header = ParagraphStyle('CellHeader', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.white, fontName="Helvetica-Bold")
 
-    story.append(Paragraph("<b>ANALISI COMPLETA SCHEDINE GIORNALIERE</b>", title_style))
-    story.append(Paragraph(f"Data: {oggi} | Top 5 Campionati Europei | Partite Analizzate: {len(partite_oggi)}", subtitle_style))
-    story.append(Spacer(1, 15))
+    story.append(Paragraph("<b>REPORT GIORNALIERO SCHEDINE - TOP 5 CAMPIONATI</b>", title_style))
+    story.append(Paragraph(f"Data Odierna: {oggi} | Ordinato per Classificazione Oro, Argento e Bronzo", subtitle_style))
+    story.append(Spacer(1, 10))
 
     def crea_tabella_categoria(titolo, chiave_prono, prefisso=""):
         story.append(Paragraph(f"<b>{titolo}</b>", section_style))
         table_data = [
-            [Paragraph("<b>Lega</b>", cell_header),
+            [Paragraph("<b>Fascia / Conf.</b>", cell_header),
+             Paragraph("<b>Lega</b>", cell_header),
              Paragraph("<b>Incontro</b>", cell_header),
-             Paragraph("<b>Pronostico</b>", cell_header),
-             Paragraph("<b>Conf.</b>", cell_header),
-             Paragraph("<b>Fascia</b>", cell_header)]
+             Paragraph("<b>Pronostico Giornaliero</b>", cell_header)]
         ]
         
         for p in partite_oggi:
             if chiave_prono == "combo":
-                prono_txt = p["combo"]
+                prono_txt = f"{p['combo']} (Q: {p['q_combo']})"
             elif chiave_prono == "dc":
-                prono_txt = f"Doppia Chance {p['dc']}"
+                prono_txt = f"Doppia Chance {p['dc']} (Q: {p['q_dc']})"
             else:
-                prono_txt = f"Over {p[chiave_prono]} {prefisso}"
+                val = p[chiave_prono]
+                q = round(1.55 + (val * 0.02), 2)
+                prono_txt = f"Over {val} {prefisso} (Q: {q})"
                 
             table_data.append([
+                Paragraph(f"<b>{p['fascia']}</b> ({p['confidence']}%)", cell_style),
                 Paragraph(p["comp"], cell_style),
-                Paragraph(f"{p['casa']} - {p['ospite']}", cell_style),
-                Paragraph(prono_txt, cell_style),
-                Paragraph(f"{p['confidence']}%", cell_style),
-                Paragraph(p["fascia"], cell_style)
+                Paragraph(f"{p['casa']} vs {p['ospite']}", cell_style),
+                Paragraph(prono_txt, cell_style)
             ])
             
-        t = Table(table_data, colWidths=[90, 160, 150, 50, 75])
+        t = Table(table_data, colWidths=[90, 95, 145, 145])
         t.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1A237E')),
             ('ALIGN', (0,0), (-1,-1), 'LEFT'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E0E0E0')),
             ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F5F5F5')]),
-            ('TOPPADDING', (0,0), (-1,-1), 4),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
         ]))
         story.append(t)
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 8))
 
-    crea_tabella_categoria("🟨 OVER CARTELLINI", "lin_cartellini", "Cartellini")
-    crea_tabella_categoria("🎯 COMBO MATCH", "combo")
-    crea_tabella_categoria("⚽ TIRI IN PORTA", "lin_tp", "Tiri in Porta")
-    crea_tabella_categoria("🚀 TIRI TOTALI", "lin_tt", "Tiri Totali")
-    crea_tabella_categoria("🛡️ DOPPIE CHANCES", "dc")
-    crea_tabella_categoria("🚩 CALCI D'ANGOLO (CORNER)", "lin_corner", "Corner")
+    crea_tabella_categoria("🟨 1. OVER CARTELLINI", "lin_cartellini", "Cartellini")
+    crea_tabella_categoria("🎯 2. COMBO MATCH", "combo")
+    crea_tabella_categoria("⚽ 3. TIRI IN PORTA", "lin_tp", "Tiri in Porta")
+    crea_tabella_categoria("🚀 4. TIRI TOTALI", "lin_tt", "Tiri Totali")
+    crea_tabella_categoria("🛡️ 5. DOPPIE CHANCES", "dc")
+    crea_tabella_categoria("🚩 6. CALCI D'ANGOLO (CORNER)", "lin_corner", "Corner")
 
     doc.build(story)
-    print(f"✅ PDF '{pdf_filename}' generato con successo.")
+    print(f"✅ PDF giornaliero '{pdf_filename}' generato correttamente.")
 
     # ==========================================
     # 🚀 INVIO DEL PDF SU TELEGRAM
     # ==========================================
     url_document = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    
-    caption_txt = f"📊 *REPORT COMPLETO IN PDF* ({oggi})\nIn allegato trovi l'analisi tabellata di tutti i match con le fasce Oro 🥇, Argento 🥈 e Bronzo 🥉."
+    caption_txt = f"📅 *REPORT GIORNALIERO SCHEDINE* ({oggi})\nPartite odierne ordinate per Oro 🥇, Argento 🥈 e Bronzo 🥉."
     
     with open(pdf_filename, 'rb') as doc_file:
         files = {'document': doc_file}
-        data = {
-            'chat_id': CHAT_ID,
-            'caption': caption_txt,
-            'parse_mode': 'Markdown'
-        }
-        res_send = requests.post(url_document, data=data, files=files)
-        
-    if res_send.status_code == 200:
-        print("✅ File PDF inviato con successo su Telegram!")
-    else:
-        print(f"⚠️ Errore invio Telegram: {res_send.text}")
-
-except Exception as e:
-    print(f"❌ Errore generale: {e}")
+        data
