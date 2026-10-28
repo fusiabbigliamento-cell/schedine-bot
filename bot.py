@@ -16,25 +16,22 @@ API_TOKEN = os.environ.get('API_TOKEN', 'e2c702f19ed64c2088f7ab6c22493911')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8524849158:AAG2vVKUWqC4J_T1jDPA7IQxLY1uFy0jW9o')
 CHAT_ID = os.environ.get('CHAT_ID', '591667981')
 
-TOP_LEAGUES_CODES = ['SA', 'PL', 'PD', 'BL1', 'FL1']
+TOP_LEAGUES = ['SA', 'PL', 'PD', 'BL1', 'FL1']
 headers = {'X-Auth-Token': API_TOKEN}
 
 oggi = datetime.now().strftime('%Y-%m-%d')
 
-print(f"🔄 Recupero le partite globali per la data odierna: {oggi}...")
+print(f"🔄 Recupero le partite ESCLUSIVAMENTE per la giornata di oggi: {oggi}...")
 
 try:
-    # Endpoint globale filtrato per la data di oggi (evita di scaricare l'intera stagione)
-    url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
-    res = requests.get(url_oggi, headers=headers)
-    
     raw_matches = []
-    if res.status_code == 200:
-        all_matches = res.json().get('matches', [])
-        # Filtriamo rigorosamente solo i Top 5 Campionati Europei
-        raw_matches = [m for m in all_matches if m.get('competition', {}).get('code') in TOP_LEAGUES_CODES]
+    for league in TOP_LEAGUES:
+        url_league = f"https://api.football-data.org/v4/competitions/{league}/matches?date={oggi}"
+        res_l = requests.get(url_league, headers=headers)
+        if res_l.status_code == 200:
+            raw_matches.extend(res_l.json().get('matches', []))
 
-    print(f"✅ Trovate {len(raw_matches)} partite ufficiali per oggi nei Top 5 campionati.")
+    print(f"✅ Trovate {len(raw_matches)} partite in programma oggi nei Top 5 campionati.")
 
     partite_oggi = []
     for m in raw_matches:
