@@ -69,7 +69,6 @@ try:
             ]
             scelta_combo, quota_combo = random.choice(pool_combo_match)
 
-            # Calcolo linee specifiche per il pronostico
             tot_g = round(g_c + g_o, 1)
             lin_cart = round(tot_g + 0.5, 1)
             
@@ -77,7 +76,7 @@ try:
             lin_tp = max(3, int(tot_tp - 1)) + 0.5
             
             tot_tt = round(tt_c + tt_o, 1)
-            lin_tt = int(tt_tt - 2) + 0.5
+            lin_tt = int(tot_tt - 2) + 0.5
             
             tot_co = round(co_c + co_o, 1)
             lin_co = max(7, int(tot_co - 1)) + 0.5
@@ -136,124 +135,4 @@ try:
         lines.append("🚀 *4. TIRI TOTALI*")
         tot_q4 = 1.0
         for i, m in enumerate(partite_oggi, 1):
-            q = round(1.65 + (m["lin_tt"] * 0.01), 2)
-            tot_q4 *= q
-            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_tt']} Tiri Totali (Q: {q}) | Conf: {m['confidence']}%")
-        lines.append(f"📊 *Quota Totale Tiri Totali: {round(tot_q4, 2)}*\n")
-
-        # 5️⃣ Doppie chances
-        lines.append("🛡️ *5. DOPPIE CHANCES*")
-        tot_q5 = 1.0
-        for i, m in enumerate(partite_oggi, 1):
-            q = m["prob_1x"] if m["dc_scelta"] == "1X" else m["prob_x2"]
-            tot_q5 *= q
-            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Doppia Chance: {m['dc_scelta']} (Q: {q}) | Conf: {m['confidence']}%")
-        lines.append(f"📊 *Quota Totale Doppie Chances: {round(tot_q5, 2)}*\n")
-
-        # 6️⃣ Corner
-        lines.append("🚩 *6. CALCI D'ANGOLO (CORNER)*")
-        tot_q6 = 1.0
-        for i, m in enumerate(partite_oggi, 1):
-            q_corner = round(1.65 + (m["lin_corner"] * 0.015), 2)
-            tot_q6 *= q_corner
-            lines.append(f"{i}. {m['casa']} - {m['ospite']} ➔ Over {m['lin_corner']} Corner (Q: {q_corner}) | Conf: {m['confidence']}%")
-        lines.append(f"📊 *Quota Totale Corner: {round(tot_q6, 2)}*")
-
-        testo_schedine = "\n".join(lines)
-
-        # ==========================================
-        # 🚀 INVIO SCHEDINE A TELEGRAM
-        # ==========================================
-        telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload_schedine = {
-            "chat_id": CHAT_ID,
-            "text": testo_schedine,
-            "parse_mode": "Markdown"
-        }
-        
-        requests.post(telegram_url, json=payload_schedine)
-
-        # ==========================================
-        # ⏱️ ATTESA 1 MINUTO PER IL REPORT PER GRUPPI
-        # ==========================================
-        time.sleep(60)
-
-        # ==========================================
-        # 📊 VERIFICA DIVISA PER GRUPPI DI SCHEDINE
-        # ==========================================
-        url_ieri = f"https://api.football-data.org/v4/matches?date={ieri}"
-        res_ieri = requests.get(url_ieri, headers=headers)
-        
-        rep_cartellini = ["🟨 *1. VERIFICA CARTELLINI*"]
-        rep_combo = ["🎯 *2. VERIFICA COMBO MATCH*"]
-        rep_tp = ["⚽ *3. VERIFICA TIRI IN PORTA*"]
-        rep_tt = ["🚀 *4. VERIFICA TIRI TOTALI*"]
-        rep_dc = ["🛡️ *5. VERIFICA DOPPIE CHANCES*"]
-        rep_corner = ["🚩 *6. VERIFICA CORNER*"]
-        
-        if res_ieri.status_code == 200:
-            matches_ieri = res_ieri.json().get('matches', [])
-            if matches_ieri:
-                for mi in matches_ieri[:6]:
-                    c_team = mi.get('homeTeam', {}).get('shortName', 'Casa')
-                    o_team = mi.get('awayTeam', {}).get('shortName', 'Ospite')
-                    status = mi.get('status')
-                    
-                    if status == 'FINISHED':
-                        score = mi.get('score', {}).get('fullTime', {})
-                        hg = score.get('home', 0)
-                        ag = score.get('away', 0)
-                        
-                        seed_ieri = sum(ord(c) for c in (c_team + o_team))
-                        random.seed(seed_ieri)
-                        
-                        # Dati simulati reali post-match
-                        reali_cartellini = random.randint(2, 6)
-                        reali_tp = random.randint(4, 11)
-                        reali_tt = random.randint(14, 28)
-                        reali_corner = random.randint(7, 13)
-                        
-                        # Pronostici standard di riferimento per il test
-                        p_cart = 3.5
-                        p_tp = 5.5
-                        p_tt = 12.5
-                        p_corner = 8.5
-                        
-                        # Esiti con spunta verde o croce rossa
-                        v_cart = "✅" if reali_cartellini > p_cart else "❌"
-                        v_tp = "✅" if reali_tp > p_tp else "❌"
-                        v_tt = "✅" if reali_tt > p_tt else "❌"
-                        v_corner = "✅" if reali_corner > p_corner else "❌"
-                        v_dc = "✅" if hg >= ag else "❌"
-                        v_combo = "✅" if (hg + ag) >= 2 else "❌"
-
-                        rep_cartellini.append(f"• {c_team} - {o_team} ➔ Pronostici: {p_cart} ➔ Reali: {reali_cartellini} {v_cart}")
-                        rep_tp.append(f"• {c_team} - {o_team} ➔ Pronostici: {p_tp} ➔ Reali: {reali_tp} {v_tp}")
-                        rep_tt.append(f"• {c_team} - {o_team} ➔ Pronostici: {p_tt} ➔ Reali: {reali_tt} {v_tt}")
-                        rep_corner.append(f"• {c_team} - {o_team} ➔ Pronostici: {p_corner} ➔ Reali: {reali_corner} {v_corner}")
-                        rep_dc.append(f"• {c_team} - {o_team} ➔ Pronostici: 1X ➔ Reali: {hg}-{ag} {v_dc}")
-                        rep_combo.append(f"• {c_team} - {o_team} ➔ Pronostici: Over 1.5 ➔ Reali: {hg+ag} gol {v_combo}")
-
-        testo_report_finale = "\n\n".join([
-            "\n".join(rep_cartellini),
-            "\n".join(rep_combo),
-            "\n".join(rep_tp),
-            "\n".join(rep_tt),
-            "\n".join(rep_dc),
-            "\n".join(rep_corner)
-        ])
-
-        payload_report = {
-            "chat_id": CHAT_ID,
-            "text": f"📋 *REPORT VERIFICA ESITI PER GRUPPO* ({ieri})\n\n{testo_report_finale}",
-            "parse_mode": "Markdown"
-        }
-        
-        requests.post(telegram_url, json=payload_report)
-        print("✅ Report suddiviso per gruppi inviato con successo!")
-
-    else:
-        print(f"⚠️ Errore API {response.status_code}: {response.text}")
-
-except Exception as e:
-    print(f"❌ Errore: {e}")
+            q = round(1
