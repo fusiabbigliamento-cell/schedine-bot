@@ -15,7 +15,7 @@ headers_fd = {'X-Auth-Token': API_TOKEN}
 headers_odss = {'x-api-key': ODSS_KEY}
 oggi = datetime.now().strftime('%Y-%m-%d')
 
-print(f"🔄 Recupero palinsesto e quote reali per la data: {oggi}...")
+print(f"🔄 Recupero palinsesto e calcolo metriche con valori massimi estesi per la data: {oggi}...")
 
 try:
     # 1. Recupero delle partite odierne da football-data.org
@@ -35,7 +35,6 @@ try:
     odds_map = {}
     if res_odss.status_code == 200:
         odds_data = res_odss.json()
-        # Gestione sicura ed esplicita della struttura dati di Odss API
         list_odds = []
         if isinstance(odds_data, list):
             list_odds = odds_data
@@ -82,11 +81,10 @@ try:
         punti_casa = dati_casa.get('points', 0)
         punti_ospite = dati_ospite.get('points', 0)
         
-        # Ricerca quote reali abbinate dall'Odss API
         match_odds = odds_map.get((home_team.get('name', '').lower(), away_team.get('name', '').lower()), {})
-        q_1x_reale = match_odds.get('1x', 1.30)
-        q_x2_reale = match_odds.get('x2', 1.35)
-        q_combo_reale = match_odds.get('combo', 1.50)
+        q_1x_reale = match_odds.get('1x', 1.45)
+        q_x2_reale = match_odds.get('x2', 1.55)
+        q_combo_reale = match_odds.get('combo', 2.10) # Valori massimi combo innalzati
         
         diff_pos = pos_ospite - pos_casa
         diff_punti = punti_casa - punti_ospite
@@ -96,32 +94,44 @@ try:
             confidence = 82
             fascia = "🟢"
             dc = "1X" if pos_casa < pos_ospite else "X2"
-            combo = "1X + Over 1.5 Gol" if pos_casa < pos_ospite else "X2 + Over 1.5 Gol"
+            combo = "1X + Over 2.5 Gol" if pos_casa < pos_ospite else "X2 + Over 2.5 Gol"
         elif forza_match > 8:
             confidence = 65
             fascia = "🟡"
             dc = "1X" if pos_casa <= pos_ospite else "X2"
-            combo = "Goal SI + Over 1.5"
+            combo = "Goal SI + Over 2.5"
         else:
             confidence = 38
             fascia = "🔴"
             dc = "1X"
-            combo = "12 + Over 1.5 Gol"
+            combo = "12 + Over 2.5 Gol"
 
-        lin_cart = round(3.5 + abs(pos_casa - pos_ospite) * 0.05, 1)
-        lin_tp = max(3.5, round(5.0 - (min(pos_casa, pos_ospite) * 0.1), 1))
-        lin_tt = 12.5
-        lin_co = 9.5
+        # --- LINEE E QUOTE CON VALORI MASSIMI INNALZATI ---
+        # Cartellini: tetti massimi più alti (es. fino a 5.5 o 6.5 con quote elevate)
+        lin_cart = round(3.5 + (abs(pos_casa - pos_ospite) % 4) * 0.5, 1) 
+        q_cart_reale = round(1.75 + (lin_cart - 3.5) * 1.15, 2) # Spinge le quote fino a soglie alte (es. 3.20+)
+
+        # Tiri in Porta (standard più ambiziosi tra 5.5 e 9.5)
+        lin_tp = round(5.5 + (12 - min(pos_casa, pos_ospite)) * 0.15, 1)
+        q_tp_reale = round(1.85 + (lin_tp - 5.5) * 0.65, 2)
+
+        # Tiri Totali (standard alti tra 25.5 e 32.5)
+        lin_tt = round(25.5 + (abs(pos_casa - pos_ospite) % 7), 1)
+        q_tt_reale = round(1.90 + (lin_tt - 25.5) * 0.25, 2)
+
+        # Corner (standard alti tra 9.5 e 13.5)
+        lin_co = round(9.5 + (forza_match % 4), 1)
+        q_co_reale = round(1.80 + (lin_co - 9.5) * 0.35, 2)
 
         is_rinviata = status_match in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
 
         partite_analizzate.append({
             "casa": casa, "ospite": ospite,
             "status": status_match, "is_rinviata": is_rinviata,
-            "lin_cartellini": lin_cart, "q_cart": 1.0 if is_rinviata else 1.65,
-            "lin_tp": lin_tp, "q_tp": 1.0 if is_rinviata else 1.75,
-            "lin_tt": lin_tt, "q_tt": 1.0 if is_rinviata else 1.80,
-            "lin_corner": lin_co, "q_corner": 1.0 if is_rinviata else 1.70,
+            "lin_cartellini": lin_cart, "q_cart": 1.0 if is_rinviata else q_cart_reale,
+            "lin_tp": lin_tp, "q_tp": 1.0 if is_rinviata else q_tp_reale,
+            "lin_tt": lin_tt, "q_tt": 1.0 if is_rinviata else q_tt_reale,
+            "lin_corner": lin_co, "q_corner": 1.0 if is_rinviata else q_co_reale,
             "dc": dc, "q_dc": 1.0 if is_rinviata else (q_1x_reale if dc=="1X" else q_x2_reale),
             "combo": combo, "q_combo": 1.0 if is_rinviata else q_combo_reale,
             "confidence": confidence, "fascia": fascia, "priority": 1 if fascia=="🟢" else (2 if fascia=="🟡" else 3)
@@ -134,7 +144,7 @@ try:
     # 📝 COMPOSIZIONE REPORT PER TELEGRAM
     # ==========================================
     lines = []
-    lines.append(f"🧠 *ANALISI CON QUOTE REALI* ({oggi})\n")
+    lines.append(f"🧠 *ANALISI CON QUOTE E SOGLIE MASSIME* ({oggi})\n")
 
     def format_riga(m, prono_txt, quota):
         if m['is_rinviata']:
@@ -201,7 +211,7 @@ try:
     
     res = requests.post(telegram_url, json=payload)
     if res.status_code == 200:
-        print("✅ Analisi con quote reali inviata con successo su Telegram!")
+        print("✅ Analisi con soglie massime estese inviata con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res.text}")
 
