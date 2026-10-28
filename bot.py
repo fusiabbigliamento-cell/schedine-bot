@@ -1,6 +1,6 @@
 import os
 import requests
-json
+import json
 from datetime import datetime
 
 # ==========================================
@@ -63,7 +63,6 @@ try:
         diff_punti = punti_casa - punti_ospite
         forza_match = abs(diff_punti) + abs(diff_pos) * 0.5
         
-        # Calcolo analitico della confidenza in base ai valori reali
         if forza_match > 15 or (pos_casa <= 4 and pos_ospite >= 15):
             confidence = 85
             fascia = "🟢"
@@ -113,7 +112,7 @@ try:
     migliori_15 = partite_analizzate[:15]
 
     # ==========================================
-    # 📝 COMPOSIZIONE REPORT PER TELEGRAM (SOLO CONFIDENZA)
+    # 📝 COMPOSIZIONE REPORT PER TELEGRAM
     # ==========================================
     lines = []
     lines.append(f"🧠 *ANALISI STRUTTURALE & CONFIDENZA* ({oggi})\n")
