@@ -15,7 +15,7 @@ headers_fd = {'X-Auth-Token': API_TOKEN}
 headers_odss = {'x-api-key': ODSS_KEY}
 oggi = datetime.now().strftime('%Y-%m-%d')
 
-print(f"🔄 Recupero palinsesto e calcolo metriche con valori massimi estesi per la data: {oggi}...")
+print(f"🔄 Recupero palinsesto e applicazione logica incrementale (.50 + 1.0) per la data: {oggi}...")
 
 try:
     # 1. Recupero delle partite odierne da football-data.org
@@ -84,7 +84,7 @@ try:
         match_odds = odds_map.get((home_team.get('name', '').lower(), away_team.get('name', '').lower()), {})
         q_1x_reale = match_odds.get('1x', 1.45)
         q_x2_reale = match_odds.get('x2', 1.55)
-        q_combo_reale = match_odds.get('combo', 2.10) # Valori massimi combo innalzati
+        q_combo_reale = match_odds.get('combo', 2.10)
         
         diff_pos = pos_ospite - pos_casa
         diff_punti = punti_casa - punti_ospite
@@ -106,22 +106,26 @@ try:
             dc = "1X"
             combo = "12 + Over 2.5 Gol"
 
-        # --- LINEE E QUOTE CON VALORI MASSIMI INNALZATI ---
-        # Cartellini: tetti massimi più alti (es. fino a 5.5 o 6.5 con quote elevate)
-        lin_cart = round(3.5 + (abs(pos_casa - pos_ospite) % 4) * 0.5, 1) 
-        q_cart_reale = round(1.75 + (lin_cart - 3.5) * 1.15, 2) # Spinge le quote fino a soglie alte (es. 3.20+)
+        # --- LOGICA DI INCREMENTO (.50 + 1.0 per volta) ---
+        # Esempio Cartellini: parte da 2.50 o 3.50 e sale di 1 in 1 (2.50, 3.50, 4.50...)
+        base_cart = 2.5 if abs(pos_casa - pos_ospite) <= 5 else 3.5
+        lin_cart = base_cart + int(abs(pos_casa - pos_ospite) % 3) # Incrementi interi (+0, +1, +2 -> finisce sempre in .50)
+        q_cart_reale = round(1.75 + (lin_cart - 2.5) * 1.15, 2)
 
-        # Tiri in Porta (standard più ambiziosi tra 5.5 e 9.5)
-        lin_tp = round(5.5 + (12 - min(pos_casa, pos_ospite)) * 0.15, 1)
-        q_tp_reale = round(1.85 + (lin_tp - 5.5) * 0.65, 2)
+        # Tiri in Porta: parte da 4.50 e sale di 1 in 1
+        base_tp = 4.5
+        lin_tp = base_tp + int((12 - min(pos_casa, pos_ospite)) % 4)
+        q_tp_reale = round(1.85 + (lin_tp - 4.5) * 0.65, 2)
 
-        # Tiri Totali (standard alti tra 25.5 e 32.5)
-        lin_tt = round(25.5 + (abs(pos_casa - pos_ospite) % 7), 1)
-        q_tt_reale = round(1.90 + (lin_tt - 25.5) * 0.25, 2)
+        # Tiri Totali: parte da 21.50 e sale di 1 in 1 (21.50, 22.50, 23.50...)
+        base_tt = 21.5
+        lin_tt = base_tt + int(abs(pos_casa - pos_ospite) % 6)
+        q_tt_reale = round(1.90 + (lin_tt - 21.5) * 0.25, 2)
 
-        # Corner (standard alti tra 9.5 e 13.5)
-        lin_co = round(9.5 + (forza_match % 4), 1)
-        q_co_reale = round(1.80 + (lin_co - 9.5) * 0.35, 2)
+        # Corner: parte da 8.50 e sale di 1 in 1 (8.50, 9.50, 10.50...)
+        base_co = 8.5
+        lin_co = base_co + int(forza_match % 4)
+        q_co_reale = round(1.80 + (lin_co - 8.5) * 0.35, 2)
 
         is_rinviata = status_match in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
 
@@ -144,7 +148,7 @@ try:
     # 📝 COMPOSIZIONE REPORT PER TELEGRAM
     # ==========================================
     lines = []
-    lines.append(f"🧠 *ANALISI CON QUOTE E SOGLIE MASSIME* ({oggi})\n")
+    lines.append(f"🧠 *ANALISI CON LINEE A INCREMENTO .50* ({oggi})\n")
 
     def format_riga(m, prono_txt, quota):
         if m['is_rinviata']:
@@ -157,7 +161,7 @@ try:
     tot_q1 = 1.0
     for m in migliori_15:
         tot_q1 *= m['q_cart']
-        lines.append(format_riga(m, f"Ov {m['lin_cartellini']} Cart.", m['q_cart']))
+        lines.append(format_riga(m, f"Ov {m['lin_cartellini']:.2f} Cart.", m['q_cart']))
     lines.append(f"📊 *Tot. Cartellini: {round(tot_q1, 2)}*\n")
 
     # 2. Combo Match
@@ -173,7 +177,7 @@ try:
     tot_q3 = 1.0
     for m in migliori_15:
         tot_q3 *= m['q_tp']
-        lines.append(format_riga(m, f"Ov {m['lin_tp']} T.Porta", m['q_tp']))
+        lines.append(format_riga(m, f"Ov {m['lin_tp']:.2f} T.Porta", m['q_tp']))
     lines.append(f"📊 *Tot. Tiri Porta: {round(tot_q3, 2)}*\n")
 
     # 4. Tiri Totali
@@ -181,7 +185,7 @@ try:
     tot_q4 = 1.0
     for m in migliori_15:
         tot_q4 *= m['q_tt']
-        lines.append(format_riga(m, f"Ov {m['lin_tt']} T.Tot", m['q_tt']))
+        lines.append(format_riga(m, f"Ov {m['lin_tt']:.2f} T.Tot", m['q_tt']))
     lines.append(f"📊 *Tot. Tiri Totali: {round(tot_q4, 2)}*\n")
 
     # 5. Doppie Chances
@@ -197,7 +201,7 @@ try:
     tot_q6 = 1.0
     for m in migliori_15:
         tot_q6 *= m['q_corner']
-        lines.append(format_riga(m, f"Ov {m['lin_corner']} Corner", m['q_corner']))
+        lines.append(format_riga(m, f"Ov {m['lin_corner']:.2f} Corner", m['q_corner']))
     lines.append(f"📊 *Tot. Corner: {round(tot_q6, 2)}*")
 
     testo_finale = "\n".join(lines)
@@ -211,7 +215,7 @@ try:
     
     res = requests.post(telegram_url, json=payload)
     if res.status_code == 200:
-        print("✅ Analisi con soglie massime estese inviata con successo su Telegram!")
+        print("✅ Analisi con linee incrementali (.50) inviata con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res.text}")
 
