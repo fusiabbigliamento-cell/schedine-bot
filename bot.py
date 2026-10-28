@@ -13,7 +13,7 @@ CHAT_ID = os.environ.get('CHAT_ID', '591667981')
 headers_fd = {'X-Auth-Token': API_TOKEN}
 oggi = datetime.now().strftime('%Y-%m-%d')
 
-print(f"🔄 Recupero palinsesto e analisi confidenza basata su classifica per la data: {oggi}...")
+print(f"🔄 Recupero palinsesto e calcolo confidenza dinamica per la data: {oggi}...")
 
 try:
     # 1. Recupero delle partite odierne da football-data.org
@@ -59,35 +59,41 @@ try:
         punti_casa = dati_casa.get('points', 0)
         punti_ospite = dati_ospite.get('points', 0)
         
-        diff_pos = pos_ospite - pos_casa
-        diff_punti = punti_casa - punti_ospite
-        forza_match = abs(diff_punti) + abs(diff_pos) * 0.5
+        diff_pos = abs(pos_ospite - pos_casa)
+        diff_punti = abs(punti_casa - punti_ospite)
+        forza_match = diff_punti + (diff_pos * 0.5)
         
-        if forza_match > 15 or (pos_casa <= 4 and pos_ospite >= 15):
-            confidence = 85
+        # --- FORMULA DI CONFIDENZA DINAMICA E FLUIDA ---
+        # Parte da una base del 40% e scala in base ai punti e alla distanza in classifica (limitata tra 38% e 93%)
+        conf_calc = 40.0 + (diff_punti * 2.2) + (diff_pos * 1.1)
+        confidence = int(min(max(conf_calc, 38), 93))
+
+        # Assegnazione del semaforo e delle scelte in base al valore dinamico calcolato
+        if confidence >= 75:
             fascia = "🟢"
+            priority = 1
             dc = "1X" if pos_casa < pos_ospite else "X2"
             combo = "1X + Over 1.5 Gol" if pos_casa < pos_ospite else "X2 + Over 1.5 Gol"
-        elif forza_match > 8:
-            confidence = 68
+        elif confidence >= 55:
             fascia = "🟡"
+            priority = 2
             dc = "1X" if pos_casa <= pos_ospite else "X2"
             combo = "Goal SI + Over 1.5"
         else:
-            confidence = 45
             fascia = "🔴"
+            priority = 3
             dc = "1X"
             combo = "12 + Over 1.5 Gol"
 
         # --- LOGICA DI INCREMENTO (.50 + 1.0) ---
         base_cart = 2.5
-        lin_cart = base_cart + int(abs(pos_casa - pos_ospite) % 3)
+        lin_cart = base_cart + int(diff_pos % 3)
 
         base_tp = 4.5
         lin_tp = base_tp + int((12 - min(pos_casa, pos_ospite)) % 4)
 
         base_tt = 21.5
-        lin_tt = base_tt + int(abs(pos_casa - pos_ospite) % 6)
+        lin_tt = base_tt + int(diff_pos % 6)
 
         base_co = 8.5
         lin_co = base_co + int(forza_match % 4)
@@ -105,7 +111,7 @@ try:
             "combo": combo,
             "confidence": 0 if is_rinviata else confidence, 
             "fascia": fascia, 
-            "priority": 1 if fascia=="🟢" else (2 if fascia=="🟡" else 3)
+            "priority": priority
         })
 
     partite_analizzate.sort(key=lambda x: (x['priority'], -x['confidence']))
@@ -115,7 +121,7 @@ try:
     # 📝 COMPOSIZIONE REPORT PER TELEGRAM
     # ==========================================
     lines = []
-    lines.append(f"🧠 *ANALISI STRUTTURALE & CONFIDENZA* ({oggi})\n")
+    lines.append(f"🧠 *ANALISI STRUTTURALE & CONFIDENZA DINAMICA* ({oggi})\n")
 
     def format_riga(m, prono_txt):
         if m['is_rinviata']:
@@ -169,7 +175,7 @@ try:
     
     res = requests.post(telegram_url, json=payload)
     if res.status_code == 200:
-        print("✅ Analisi basata su confidenza percentuale inviata con successo su Telegram!")
+        print("✅ Analisi con confidenza dinamica inviata con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res.text}")
 
