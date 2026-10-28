@@ -35,11 +35,15 @@ try:
     odds_map = {}
     if res_odss.status_code == 200:
         odds_data = res_odss.json()
-        # Supponendo che restituisca una lista o un dizionario di quote abbinate alle squadre
-        # Mappiamo i dati per facilitare il riscontro
-        list_odds = odds_data.get('data', odds_data) if isinstance(odds_data, [list, dict].__bases__ or True) else odds_data
-        if isinstance(list_odds, list):
-            for item in list_odds:
+        # Gestione sicura ed esplicita della struttura dati di Odss API
+        list_odds = []
+        if isinstance(odds_data, list):
+            list_odds = odds_data
+        elif isinstance(odds_data, dict):
+            list_odds = odds_data.get('data', odds_data.get('matches', []))
+            
+        for item in list_odds:
+            if isinstance(item, dict):
                 home = item.get('home_team', '').lower()
                 away = item.get('away_team', '').lower()
                 if home and away:
@@ -78,7 +82,7 @@ try:
         punti_casa = dati_casa.get('points', 0)
         punti_ospite = dati_ospite.get('points', 0)
         
-        # Ricerca quote reali abbinate dall'Odss API (con fallback di sicurezza se non trovate al millimetro)
+        # Ricerca quote reali abbinate dall'Odss API
         match_odds = odds_map.get((home_team.get('name', '').lower(), away_team.get('name', '').lower()), {})
         q_1x_reale = match_odds.get('1x', 1.30)
         q_x2_reale = match_odds.get('x2', 1.35)
