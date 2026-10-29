@@ -151,7 +151,7 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
 
 try:
     # ==========================================
-    # 📊 3. VERIFICA VERIDICA ESITI DI IERI (DA FILE STORICO)
+    # 📊 3. VERIFICA ESITI DI IERI (DA FILE STORICO)
     # ==========================================
     print(f"🔄 Verifica esiti delle partite di ieri ({ieri}) tramite lo storico salvato...")
     report_ieri_lines = []
@@ -160,7 +160,6 @@ try:
         with open(STORICO_FILE, "r") as f:
             storico_data = json.load(f)
             
-        # Recuperiamo i risultati reali di ieri da football-data
         url_ieri = f"https://api.football-data.org/v4/matches?date={ieri}"
         res_ieri = requests.get(url_ieri, headers=headers_fd)
         time.sleep(2)
@@ -176,7 +175,6 @@ try:
                     ag = score.get('away', 0)
                     risultati_reali_ieri[f"{c_it}_vs_{o_it}"] = {"hg": hg, "ag": ag}
 
-        # Controlliamo i pronostici salvati per la data di ieri
         if ieri in storico_data:
             for match_key, pronostico_salvato in storico_data[ieri].items():
                 if match_key in risultati_reali_ieri:
@@ -187,7 +185,6 @@ try:
                     bet = pronostico_salvato["bet_type"]
                     vinta = False
                     
-                    # Logica di verifica dinamica in base al tipo di pronostico salvato
                     if bet == "Segno 1": vinta = hg > ag
                     elif bet == "Segno X": vinta = hg == ag
                     elif bet == "Segno 2": vinta = hg < ag
@@ -199,7 +196,7 @@ try:
                     elif "Under 2.5" in bet: vinta = tot_g < 2.5
                     elif "Over 3.5" in bet: vinta = tot_g > 3.5
                     elif "Goal (BTTS)" in bet: vinta = hg > 0 and ag > 0
-                    else: vinta = hg > ag # Default di fallback
+                    else: vinta = hg > ag
                     
                     icona = "✅" if vinta else "❌"
                     partite_nomi = match_key.replace("_vs_", " vs ").title()
@@ -210,11 +207,10 @@ try:
     # ==========================================
     print("🔄 Connessione a Odss API per scaricare le quote...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
-    print(f"DEBUG ODSS - Status: {res_odss.status_code} | Risposta: {res_odss.text[:400]}")
     odds_cache = {}
     if res_odss.status_code == 200:
         odss_data = res_odss.json()
-        events_list = odss_data.get('data', odss_data.get('matches', odss_data if isinstance(odss_data, list) else []))
+        events_list = odss_data.get('data', odss_data.get('matches', odss_data.get('odds', [])))
         for ev in events_list:
             home_name = ev.get('home_team', ev.get('home', '')).lower()
             away_name = ev.get('away_team', ev.get('away', '')).lower()
@@ -287,7 +283,6 @@ try:
         best_bet = evaluate_best_bet(probs, match_odds)
         is_rinviata = status_match in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
 
-        # Salviamo il pronostico di oggi per poterlo verificare domani
         match_key = f"{casa.lower()}_vs_{ospite.lower()}"
         if best_bet['is_value']:
             nuovo_storico_oggi[match_key] = {"bet_type": best_bet['bet_type']}
@@ -298,7 +293,6 @@ try:
             "best_bet": best_bet
         })
 
-    # Aggiorniamo il file dello storico salvando i pronostici di oggi
     storico_completo = {}
     if os.path.exists(STORICO_FILE):
         with open(STORICO_FILE, "r") as f:
@@ -374,7 +368,7 @@ try:
     print(f"✅ PDF definitivo generato: {pdf_filename}")
 
     # ==========================================
-    # 📤 6. INVIO TELEGRAM CON BILANCIO CORRETTO
+    # 📤 6. INVIO TELEGRAM CON BILANCIO STORICO
     # ==========================================
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     
