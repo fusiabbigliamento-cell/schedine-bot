@@ -101,7 +101,7 @@ def find_real_odds(casa, ospite, odds_cache):
     close_matches = get_close_matches(match_key, all_keys, n=1, cutoff=0.4)
     if close_matches:
         return odds_cache[close_matches[0]]
-    return None  # Nessuna quota inventata: se non c'è, restituisce None
+    return None
 
 # ==========================================
 # 📊 3. VALUTATORI DELLE 4 LISTE
@@ -144,9 +144,10 @@ def evaluate_advanced_bet(probs, odds):
         {"name": "Scarto 1 Gol", "prob": probs["p_scarto_1"], "odds": odds.get("scarto_1", 0)},
         {"name": "Parziale/Finale: 1/1", "prob": probs["p_ht_ft_11"], "odds": odds.get("ht_ft_11", 0)}
     ]
-    best = max(markets, key=lambda x: x["prob"])
+    valid = [m for m in markets if m["odds"] and m["odds"] > 1.40]
+    if not valid: return {"bet_type": "Nessuna Combo Valida", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False}
+    best = max(valid, key=lambda x: x["prob"])
     od = best["odds"]
-    if not od or od < 1.50: return {"bet_type": "Nessuna Combo Valida", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False}
     edge = best["prob"] - (1 / od)
     return {"bet_type": best["name"], "model_prob": round(best["prob"] * 100, 1), "odds": od, "edge": round(edge * 100, 2), "is_value": True}
 
@@ -157,7 +158,7 @@ def evaluate_corners_bet(probs, odds):
         {"name": "Casa Over 4.5 Corner", "prob": probs["p_home_corners"], "odds": odds.get("home_corners", 0)},
         {"name": "Ospite Over 3.5 Corner", "prob": probs["p_away_corners"], "odds": odds.get("away_corners", 0)}
     ]
-    valid = [m for m in markets if m["odds"] > 1.40]
+    valid = [m for m in markets if m["odds"] and m["odds"] > 1.40]
     if not valid: return {"bet_type": "Corner non quotati", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False}
     best = max(valid, key=lambda x: x["prob"])
     edge = best["prob"] - (1 / best["odds"])
@@ -169,7 +170,7 @@ def evaluate_cards_bet(probs, odds):
         {"name": "Over 3.5 Cartellini", "prob": probs["p_over_35_cards"], "odds": odds.get("cards_35", 0)},
         {"name": "Over 4.5 Cartellini", "prob": probs["p_over_45_cards"], "odds": odds.get("cards", 0)}
     ]
-    valid = [m for m in markets if m["odds"] > 1.40]
+    valid = [m for m in markets if m["odds"] and m["odds"] > 1.40]
     if not valid: return {"bet_type": "Cartellini non quotati", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False}
     best = max(valid, key=lambda x: x["prob"])
     edge = best["prob"] - (1 / best["odds"])
@@ -240,14 +241,12 @@ try:
         d_home = comp_data["home"].get(home_team.get('name'), comp_data["total"].get(home_team.get('name'), {"goalsFor": 1, "goalsAgainst": 1, "playedGames": 1}))
         d_away = comp_data["away"].get(away_team.get('name'), comp_data["total"].get(away_team.get('name'), {"goalsFor": 1, "goalsAgainst": 1, "playedGames": 1}))
         
-        # Calcolo xG basato unicamente sui dati reali di gol fatti/subiti in casa/trasferta divisi per le partite giocate
         pg_h = max(1, d_home.get('playedGames', 1))
         pg_a = max(1, d_away.get('playedGames', 1))
         
         home_xg = (d_home.get('goalsFor', 1) / pg_h + d_away.get('goalsAgainst', 1) / pg_a) / 2
         away_xg = (d_away.get('goalsFor', 1) / pg_a + d_home.get('goalsAgainst', 1) / pg_h) / 2
         
-        # Parametri statistici reali basati sulla media gol effettiva
         home_corners = 4.0 + (home_xg * 1.1)
         away_corners = 3.5 + (away_xg * 1.0)
         home_cards = 2.0 + (home_xg * 0.15)
@@ -345,7 +344,7 @@ try:
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
-        payload = {"chat_id": CHAT_ID, "caption": f"🧠 *Report Quantitativo Reale ({oggi})* 🚀"}
+        payload = {"chat_id": CHID if 'CHID' in locals() else CHAT_ID, "caption": f"🧠 *Report Quantitativo Reale ({oggi})* 🚀"}
         requests.post(telegram_url, data=payload, files=files)
 
 except Exception as e:
