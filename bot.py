@@ -29,7 +29,7 @@ ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo multi-lista a 4 sezioni per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo multi-lista (Corner e Cartellini sempre presenti) per il: {oggi}...")
 
 # ==========================================
 # 📐 1. CALCOLO POISSON E PROBABILITÀ MULTI-MERCATO
@@ -61,8 +61,8 @@ def calculate_full_probabilities(home_xg, away_xg, home_corners_exp, away_corner
     # Corner (Totali e Squadra)
     total_corners_exp = home_corners_exp + away_corners_exp
     p_over_95_corners = sum(poisson_probability(total_corners_exp, c) for c in range(10, 15)) + (1 - sum(poisson_probability(total_corners_exp, c) for c in range(15)))
-    p_home_corners_over = sum(poisson_probability(home_corners_exp, c) for c in range(6, 12))
-    p_away_corners_over = sum(poisson_probability(away_corners_exp, c) for c in range(5, 12))
+    p_home_corners_over = sum(poisson_probability(home_corners_exp, c) for c in range(5, 12))
+    p_away_corners_over = sum(poisson_probability(away_corners_exp, c) for c in range(4, 12))
 
     # Cartellini
     total_cards_exp = home_cards_exp + away_cards_exp
@@ -170,38 +170,40 @@ def evaluate_advanced_bet(probs, match_odds_dict):
     return best_adv if best_adv else {"bet_type": "Nessuna Combo", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False}
 
 def evaluate_corners_bet(probs, match_odds_dict):
+    # Seleziona sempre la migliore opzione corner stimata dal modello (senza vincolo di Edge obbligatorio)
     markets = [
         {"name": "Over 9.5 Corner Totali", "prob": probs["p_over_corners"], "odds": match_odds_dict.get("corners", 1.85)},
         {"name": "Casa Over 4.5 Corner", "prob": probs["p_home_corners"], "odds": match_odds_dict.get("home_corners", 1.90)},
         {"name": "Ospite Over 3.5 Corner", "prob": probs["p_away_corners"], "odds": match_odds_dict.get("away_corners", 1.95)}
     ]
-    best_cor = None
-    max_edge = 0.01
-    for m in markets:
-        odds = m["odds"]
-        if not odds or odds < 1.50: continue
-        implied_prob = 1 / odds
-        edge = m["prob"] - implied_prob
-        if edge > max_edge:
-            max_edge = edge
-            best_cor = {"bet_type": m["name"], "model_prob": round(m["prob"] * 100, 1), "odds": odds, "edge": round(edge * 100, 2), "is_value": True}
-    return best_cor if best_cor else {"bet_type": "Nessun Corner Consigliato", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False}
+    best_cor = max(markets, key=lambda x: x["prob"])
+    odds = best_cor["odds"]
+    implied_prob = 1 / odds if odds > 0 else 0.5
+    edge = best_cor["prob"] - implied_prob
+    return {
+        "bet_type": best_cor["name"],
+        "model_prob": round(best_cor["prob"] * 100, 1),
+        "odds": odds,
+        "edge": round(edge * 100, 2),
+        "is_value": True
+    }
 
 def evaluate_cards_bet(probs, match_odds_dict):
+    # Seleziona sempre l'opzione cartellini stimata dal modello (senza vincolo di Edge obbligatorio)
     markets = [
         {"name": "Over 4.5 Cartellini Gialli", "prob": probs["p_over_cards"], "odds": match_odds_dict.get("cards", 1.90)}
     ]
-    best_car = None
-    max_edge = 0.01
-    for m in markets:
-        odds = m["odds"]
-        if not odds or odds < 1.50: continue
-        implied_prob = 1 / odds
-        edge = m["prob"] - implied_prob
-        if edge > max_edge:
-            max_edge = edge
-            best_car = {"bet_type": m["name"], "model_prob": round(m["prob"] * 100, 1), "odds": odds, "edge": round(edge * 100, 2), "is_value": True}
-    return best_car if best_car else {"bet_type": "Nessun Cartellino Consigliato", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False}
+    best_car = max(markets, key=lambda x: x["prob"])
+    odds = best_car["odds"]
+    implied_prob = 1 / odds if odds > 0 else 0.5
+    edge = best_car["prob"] - implied_prob
+    return {
+        "bet_type": best_car["name"],
+        "model_prob": round(best_car["prob"] * 100, 1),
+        "odds": odds,
+        "edge": round(edge * 100, 2),
+        "is_value": True
+    }
 
 try:
     # ==========================================
@@ -299,7 +301,6 @@ try:
         home_xg = max(0.8, (d_home.get('goalsFor', 12) / max(1, d_home.get('playedGames', 5)) + d_away.get('goalsAgainst', 12) / max(1, d_away.get('playedGames', 5))) / 2)
         away_xg = max(0.6, (d_away.get('goalsFor', 10) / max(1, d_away.get('playedGames', 5)) + d_home.get('goalsAgainst', 8) / max(1, d_home.get('playedGames', 5))) / 2)
         
-        # Parametri dinamici corner e cartellini derivati da statistiche di intensità
         home_corners, away_corners = 5.4, 4.6
         home_cards, away_cards = 2.3, 2.5
         home_shots, away_shots = 13.5, 11.0
@@ -319,8 +320,10 @@ try:
 
         p_primarie.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_prim})
         if b_adv['is_value']: p_avanzate.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_adv})
-        if b_cor['is_value']: p_corner.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_cor})
-        if b_car['is_value']: p_cartellini.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_car})
+        
+        # Inseriamo sempre i corner e i cartellini calcolati
+        p_corner.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_cor})
+        p_cartellini.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_car})
 
     storico_completo = {}
     if os.path.exists(STORICO_FILE):
@@ -332,8 +335,8 @@ try:
 
     p_primarie.sort(key=lambda x: -x['bet']['edge'])
     p_avanzate.sort(key=lambda x: -x['bet']['edge'])
-    p_corner.sort(key=lambda x: -x['bet']['edge'])
-    p_cartellini.sort(key=lambda x: -x['bet']['edge'])
+    p_corner.sort(key=lambda x: -x['bet']['model_prob'])      # Ordinati per probabilità decrescente del modello
+    p_cartellini.sort(key=lambda x: -x['bet']['model_prob'])  # Ordinati per probabilità decrescente del modello
 
     # ==========================================
     # 📄 5. GENERAZIONE REPORT PDF A 4 LISTE
@@ -352,7 +355,7 @@ try:
     elements.append(Paragraph(f"Data: {oggi} | Quota Min: 1.50 | Kelly: 30%", s_style))
     elements.append(HRFlowable(width="100%", thickness=1.2, color=colors.HexColor('#2B6CB0'), spaceAfter=6))
 
-    def build_table(title, items, key_name, col_widths):
+    def build_table(title, items, col_widths):
         elements.append(Paragraph(f"<b>{title}</b>", sec_style))
         t_data = [[Paragraph(f"<b>{h}</b>", h_style) for h in ["Match", "Modello %", "Quota", "Edge %", "Pronostico Consigliato"]]]
         if items:
@@ -363,11 +366,11 @@ try:
                     Paragraph(m_str, c_style),
                     Paragraph(f"{b['model_prob']}%" if not m['is_rinv'] else "-", c_style),
                     Paragraph(str(b['odds']) if not m['is_rinv'] and b['odds'] > 0 else "-", c_style),
-                    Paragraph(f"+{b['edge']}%" if not m['is_rinv'] and b['edge'] > 0 else "-", c_style),
+                    Paragraph(f"+{b['edge']}%" if not m['is_rinv'] and b['edge'] != 0 else "-", c_style),
                     Paragraph(f"<b>{b['bet_type']}</b>" if not m['is_rinv'] else "⏳ Rinviata", c_style)
                 ])
         else:
-            t_data.append([Paragraph("Nessuna selezione disponibile oggi con i filtri attuali", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style)])
+            t_data.append([Paragraph("Nessuna selezione disponibile oggi", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style)])
         
         t = Table(t_data, colWidths=col_widths)
         t.setStyle(TableStyle([
@@ -383,10 +386,10 @@ try:
         elements.append(Spacer(1, 4))
 
     # Stampa delle 4 liste nel PDF
-    build_table("Lista 1: Top Selezioni Singole (Mercati Principali)", p_primarie, 'bet', [160, 60, 60, 55, 239])
-    build_table("Lista 2: Selezioni Avanzate (Combo, Parziali & Scarti)", p_avanzate, 'bet', [160, 60, 60, 55, 239])
-    build_table("Lista 3: Trend & Corner (Totali e per Squadra)", p_corner, 'bet', [160, 60, 60, 55, 239])
-    build_table("Lista 4: Statistiche Disciplinari & Cartellini Gialli", p_cartellini, 'bet', [160, 60, 60, 55, 239])
+    build_table("Lista 1: Top Selezioni Singole (Mercati Principali)", p_primarie, [160, 60, 60, 55, 239])
+    build_table("Lista 2: Selezioni Avanzate (Combo, Parziali & Scarti)", p_avanzate, [160, 60, 60, 55, 239])
+    build_table("Lista 3: Trend & Corner (Totali e per Squadra)", p_corner, [160, 60, 60, 55, 239])
+    build_table("Lista 4: Statistiche Disciplinari & Cartellini Gialli", p_cartellini, [160, 60, 60, 55, 239])
 
     doc.build(elements)
     print(f"✅ PDF a 4 liste generato con successo: {pdf_filename}")
