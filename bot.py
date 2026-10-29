@@ -26,11 +26,9 @@ headers_fd = {'X-Auth-Token': API_TOKEN}
 headers_odss = {'x-api-key': ODSS_KEY}
 
 oggi = datetime.now().strftime('%Y-%m-%d')
-ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-pdf_filename = f"schedina_consigliata_{oggi}.pdf"
-STORICO_FILE = "storico_pronostici.json"
+pdf_filename = f"schedina_pro_multimercato_{oggi}.pdf"
 
-print(f"🔄 Avvio motore statistico puro (senza preferenze di mercato) per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo multi-mercato (Stile Pro Lab) per il: {oggi}...")
 
 def clean_team_name(name):
     if not name: return ""
@@ -44,14 +42,19 @@ def clean_team_name(name):
 def poisson_probability(lmbda, k):
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
 
-def calculate_match_probabilities(home_xg, away_xg):
+# ==========================================
+# 📐 MODELLO POISSON ESTESO (1X2, GOAL, OVER & COMBO)
+# ==========================================
+def calculate_advanced_match_profile(home_xg, away_xg):
     home_win, draw, away_win = 0, 0, 0
-    over_15, over_25 = 0, 0
+    over_15, over_25, over_35 = 0, 0, 0
     btts = 0
     
+    matrix = [[0.0 for _ in range(6)] for _ in range(6)]
     for h in range(6):
         for a in range(6):
             p = poisson_probability(home_xg, h) * poisson_probability(away_xg, a)
+            matrix[h][a] = p
             if h > a: home_win += p
             elif h == a: draw += p
             else: away_win += p
@@ -59,15 +62,21 @@ def calculate_match_probabilities(home_xg, away_xg):
             tot_g = h + a
             if tot_g > 1.5: over_15 += p
             if tot_g > 2.5: over_25 += p
+            if tot_g > 3.5: over_35 += p
             if h > 0 and a > 0: btts += p
 
     p_1x = home_win + draw
     p_x2 = away_win + draw
-    
+    p_combo_1x_over15 = p_1x * over_15
+    p_combo_btts_over25 = btts * over_25
+
     return {
         "Segno 1": home_win, "Segno X": draw, "Segno 2": away_win,
         "Doppia 1X": p_1x, "Doppia X2": p_x2,
-        "Over 1.5": over_15, "Over 2.5": over_25, "Goal (BTTS)": btts
+        "Over 1.5": over_15, "Over 2.5": over_25, "Over 3.5": over_35,
+        "Goal (BTTS)": btts,
+        "Combo: 1X + Over 1.5": p_combo_1x_over15,
+        "Combo: Goal + Over 2.5": p_combo_btts_over25
     }
 
 def find_real_odds(casa, ospite, odds_cache):
@@ -77,13 +86,10 @@ def find_real_odds(casa, ospite, odds_cache):
     if key in odds_cache: return odds_cache[key]
     matches = get_close_matches(key, list(odds_cache.keys()), n=1, cutoff=0.3)
     if matches: return odds_cache[matches[0]]
-    return {
-        "1": 2.20, "x": 3.30, "2": 3.00, "1x": 1.32, "x2": 1.55,
-        "over15": 1.35, "over25": 2.05, "goal": 1.80
-    }
+    return {}
 
-def select_best_market(probs, odds):
-    # Analisi puramente matematica basata su Poisson e confronto con le quote Odds API
+def select_best_pro_market(probs, odds):
+    # Paniere professionale di mercati analizzati
     markets = [
         ("Segno 1", probs["Segno 1"], odds.get("1")),
         ("Segno X", probs["Segno X"], odds.get("x")),
@@ -92,44 +98,57 @@ def select_best_market(probs, odds):
         ("Doppia X2", probs["Doppia X2"], odds.get("x2")),
         ("Over 1.5", probs["Over 1.5"], odds.get("over15")),
         ("Over 2.5", probs["Over 2.5"], odds.get("over25")),
-        ("Goal (BTTS)", probs["Goal (BTTS)"], odds.get("goal"))
+        ("Goal (BTTS)", probs["Goal (BTTS)"], odds.get("goal")),
+        ("Combo: 1X + Over 1.5", probs["Combo: 1X + Over 1.5"], odds.get("combo_1x_over15")),
+        ("Combo: Goal + Over 2.5", probs["Combo: Goal + Over 2.5"], odds.get("combo_btts_over25"))
     ]
     
     best = None
     max_score = -999
     for name, prob, od in markets:
-        if not od or od < 1.30:
-            od = 1.80 if "Over" in name or "Goal" in name else 2.10
+        if not od or od < 1.30: 
+            continue # Salta mercati senza quota reale o troppo bassi
         
         implied = 1 / od
         edge = prob - implied
-        # Punteggio basato unicamente su probabilità statistica ed Edge reale
-        score = edge + (prob * 0.1)
+        confidence = round(prob * 100, 1)
+        
+        # Punteggio stile Pro Lab basato su Edge e Confidenza
+        score = edge + (prob * 0.15)
         
         if score > max_score:
             max_score = score
+            tier = "ORO" if confidence >= 70 and edge > 0.10 else ("ARGENTO" if confidence >= 60 else "BRONZO")
             best = {
                 "bet_type": name,
-                "model_prob": round(prob * 100, 1),
+                "model_prob": confidence,
                 "odds": od,
-                "edge": round(edge * 100, 2)
+                "edge": round(edge * 100, 2),
+                "tier": tier
             }
-    return best if best else {"bet_type": "Over 1.5", "model_prob": 70.0, "odds": 1.75, "edge": 5.0}
+    return best
 
 try:
+    # 📥 1. DOWNLOAD QUOTE REALI DA ODDS API
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
     odds_cache = {}
     if res_odss.status_code == 200:
-        for ev in res_odss.json().get('data', res_odss.json().get('matches', [])):
+        odss_data = res_odss.json()
+        events_list = odss_data.get('data', odss_data.get('matches', odss_data.get('odds', [])))
+        for ev in events_list:
             h = clean_team_name(ev.get('home_team', ev.get('home', '')))
             a = clean_team_name(ev.get('away_team', ev.get('away', '')))
-            odds_cache[f"{h}_vs_{a}"] = {
-                "1": ev.get('odds_1'), "x": ev.get('odds_x'), "2": ev.get('odds_2'),
-                "1x": ev.get('odds_1x'), "x2": ev.get('odds_x2'),
-                "over15": ev.get('over_15'), "over25": ev.get('over_25'),
-                "goal": ev.get('btts_yes')
-            }
+            if h and a:
+                odds_cache[f"{h}_vs_{a}"] = {
+                    "1": ev.get('odds_1'), "x": ev.get('odds_x'), "2": ev.get('odds_2'),
+                    "1x": ev.get('odds_1x'), "x2": ev.get('odds_x2'),
+                    "over15": ev.get('over_15'), "over25": ev.get('over_25'), "over35": ev.get('over_35'),
+                    "goal": ev.get('btts_yes'),
+                    "combo_1x_over15": ev.get('combo_1x_over15'),
+                    "combo_btts_over25": ev.get('combo_btts_over25')
+                }
 
+    # 📥 2. DOWNLOAD PARTITE E CLASSIFICHE DA FOOTBALL-DATA API
     url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
     res_fd = requests.get(url_oggi, headers=headers_fd)
     time.sleep(2)
@@ -150,40 +169,45 @@ try:
                 "home": {item['team']['name']: item for item in t_home if 'team' in item},
                 "away": {item['team']['name']: item for item in t_away if 'team' in item}
             }
-        else:
-            classifiche_cache[cid] = {"total": {}, "home": {}, "away": {}}
 
     schedina_matches = []
     for m in raw_matches:
         cid = m.get('competition', {}).get('id')
         status = m.get('status', 'TIMED')
+        if status in ['POSTPONED', 'SUSPENDED', 'CANCELLED']:
+            continue
+            
         h_team = m.get('homeTeam', {})
         a_team = m.get('awayTeam', {})
         casa = h_team.get('shortName') or h_team.get('name', 'Casa')
         ospite = a_team.get('shortName') or a_team.get('name', 'Ospite')
         
         c_data = classifiche_cache.get(cid, {"total": {}, "home": {}, "away": {}})
-        d_h = c_data["home"].get(h_team.get('name'), c_data["total"].get(h_team.get('name'), {"goalsFor": 1, "goalsAgainst": 1, "playedGames": 1}))
-        d_a = c_data["away"].get(a_team.get('name'), c_data["total"].get(a_team.get('name'), {"goalsFor": 1, "goalsAgainst": 1, "playedGames": 1}))
+        d_h = c_data["home"].get(h_team.get('name'), c_data["total"].get(h_team.get('name'), {}))
+        d_a = c_data["away"].get(a_team.get('name'), c_data["total"].get(a_team.get('name'), {}))
         
+        if not d_h or not d_a:
+            continue
+            
         pg_h = max(1, d_h.get('playedGames', 1))
         pg_a = max(1, d_a.get('playedGames', 1))
         
-        h_xg = max(0.6, (d_h.get('goalsFor', 1) / pg_h + d_a.get('goalsAgainst', 1) / pg_a) / 2)
+        h_xg = max(0.5, (d_h.get('goalsFor', 1) / pg_h + d_a.get('goalsAgainst', 1) / pg_a) / 2)
         a_xg = max(0.5, (d_a.get('goalsFor', 1) / pg_a + d_h.get('goalsAgainst', 1) / pg_h) / 2)
 
-        probs = calculate_match_probabilities(h_xg, a_xg)
+        probs = calculate_advanced_match_profile(h_xg, a_xg)
         odds = find_real_odds(casa, ospite, odds_cache)
-        best_bet = select_best_market(probs, odds)
         
-        is_rinv = status in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
-        schedina_matches.append({
-            "casa": casa, "ospite": ospite, "status": status, "is_rinv": is_rinv, "bet": best_bet
-        })
+        best_bet = select_best_market_pro(probs, odds) if 'select_best_market_pro' in globals() else select_best_pro_market(probs, odds)
+        
+        if best_bet:
+            schedina_matches.append({
+                "casa": casa, "ospite": ospite, "bet": best_bet
+            })
 
     schedina_matches.sort(key=lambda x: -x['bet']['edge'])
 
-    # 📄 GENERAZIONE PDF
+    # 📄 GENERAZIONE PDF PROFESSIONALE
     doc = SimpleDocTemplate(pdf_filename, pagesize=letter, rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25)
     elements = []
     styles = getSampleStyleSheet()
@@ -193,24 +217,27 @@ try:
     c_style = ParagraphStyle('CStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#2D3748'))
     h_style = ParagraphStyle('HStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.white, fontName='Helvetica-Bold')
 
-    elements.append(Paragraph(f"<b>SCHEDINA CONSIGLIATA - ANALISI PURA API</b>", t_style))
-    elements.append(Paragraph(f"Data: {oggi} | Modello Statistico Oggettivo con Quote Odds API", s_style))
+    elements.append(Paragraph(f"<b>REPORT PROFESSIONALE — 1X2, GOAL & COMBO LAB</b>", t_style))
+    elements.append(Paragraph(f"Data: {oggi} | Modello Poisson Avanzato con Analisi di Valore e Tiers", s_style))
     elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#2B6CB0'), spaceAfter=10))
 
-    t_data = [[Paragraph(f"<b>{h}</b>", h_style) for h in ["Match", "Modello %", "Quota", "Edge %", "Pronostico Consigliato"]]]
+    t_data = [[Paragraph(f"<b>{h}</b>", h_style) for h in ["Match", "Tier", "Conf.", "Quota", "Edge %", "Pronostico Consigliato"]]]
     
-    for m in schedina_matches[:15]:
-        b = m['bet']
-        m_str = f"{m['casa']} - {m['ospite']} (Rinviata)" if m['is_rinv'] else f"{m['casa']} vs {m['ospite']}"
-        t_data.append([
-            Paragraph(m_str, c_style),
-            Paragraph(f"{b['model_prob']}%", c_style),
-            Paragraph(str(b['odds']), c_style),
-            Paragraph(f"+{b['edge']}%" if b['edge'] > 0 else f"{b['edge']}%", c_style),
-            Paragraph(f"<b>{b['bet_type']}</b>", c_style)
-        ])
+    if schedina_matches:
+        for m in schedina_matches[:15]:
+            b = m['bet']
+            t_data.append([
+                Paragraph(f"{m['casa']} vs {m['ospite']}", c_style),
+                Paragraph(f"<b>{b['tier']}</b>", c_style),
+                Paragraph(f"{b['model_prob']}%", c_style),
+                Paragraph(str(b['odds']), c_style),
+                Paragraph(f"+{b['edge']}%" if b['edge'] > 0 else f"{b['edge']}%", c_style),
+                Paragraph(f"<b>{b['bet_type']}</b>", c_style)
+            ])
+    else:
+        t_data.append([Paragraph("Nessun match con dati API e quote valide oggi", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style)])
 
-    t = Table(t_data, colWidths=[160, 60, 60, 55, 237])
+    t = Table(t_data, colWidths=[150, 50, 50, 50, 50, 222])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1A365D')),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
@@ -227,7 +254,7 @@ try:
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
-        payload = {"chat_id": CHAT_ID, "caption": f"🧠 *Schedina Consigliata del {oggi}* 🚀"}
+        payload = {"chat_id": CHAT_ID, "caption": f"🧠 *Report Professionale 1X2 & Combo ({oggi})* 🚀"}
         requests.post(telegram_url, data=payload, files=files)
 
 except Exception as e:
