@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import math
 import requests
 from datetime import datetime, timedelta
@@ -26,8 +27,9 @@ headers_odss = {'x-api-key': ODSS_KEY}
 oggi = datetime.now().strftime('%Y-%m-%d')
 ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
+STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo definitivo per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo con storico intelligente per il: {oggi}...")
 
 # ==========================================
 # 📐 1. FUNZIONE DI CALCOLO POISSON ESTESA
@@ -116,7 +118,7 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
     
     for m in markets:
         odds = m["odds"]
-        if not odds or odds < 1.30: # Filtro quote < 1.30
+        if not odds or odds < 1.30: 
             continue
             
         implied_prob = 1 / odds
@@ -149,38 +151,59 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
 
 try:
     # ==========================================
-    # 📊 3. VERIFICA RISULTATI IERI (REPORT ✅ / ❌)
+    # 📊 3. VERIFICA VERIDICA ESITI DI IERI (DA FILE STORICO)
     # ==========================================
-    print(f"🔄 Recupero risultati delle partite di ieri ({ieri})...")
-    url_ieri = f"https://api.football-data.org/v4/matches?date={ieri}"
-    res_ieri = requests.get(url_ieri, headers=headers_fd)
-    time.sleep(2)
-    
+    print(f"🔄 Verifica esiti delle partite di ieri ({ieri}) tramite lo storico salvato...")
     report_ieri_lines = []
-    if res_ieri.status_code == 200:
-        matches_ieri = res_ieri.json().get('matches', [])
-        for mi in matches_ieri:
-            if mi.get('status') == 'FINISHED':
-                c_team = mi.get('homeTeam', {}).get('shortName', 'Casa')
-                o_team = mi.get('awayTeam', {}).get('shortName', 'Ospite')
-                score = mi.get('score', {}).get('fullTime', {})
-                hg = score.get('home', 0)
-                ag = score.get('away', 0)
-                
-                # Semplificazione di verifica esito standard (es. Over 2.5 o Segno 1)
-                tot_g = hg + ag
-                esito_reale = "Over 2.5" if tot_g > 2.5 else "Under 2.5"
-                if hg > ag: res_1x2 = "Segno 1"
-                elif hg == ag: res_1x2 = "Segno X"
-                else: res_1x2 = "Segno 2"
-                
-                # Valutiamo l'esito di un mercato di riferimento (es. Segno 1 o Over 2.5)
-                # Scegliamo di verificare il Segno 1 come benchmark di riscontro
-                presunta_giocata = "Segno 1"
-                vinta = (hg > ag) if presunta_giocata == "Segno 1" else (tot_g > 2.5)
-                icona = "✅" if vinta else "❌"
-                
-                report_ieri_lines.append(f"• {c_team} vs {o_team} ({hg}-{ag}) ➔ {presunta_giocata} {icona}")
+    
+    if os.path.exists(STORICO_FILE):
+        with open(STORICO_FILE, "r") as f:
+            storico_data = json.load(f)
+            
+        # Recuperiamo i risultati reali di ieri da football-data
+        url_ieri = f"https://api.football-data.org/v4/matches?date={ieri}"
+        res_ieri = requests.get(url_ieri, headers=headers_fd)
+        time.sleep(2)
+        
+        risultati_reali_ieri = {}
+        if res_ieri.status_code == 200:
+            for mi in res_ieri.json().get('matches', []):
+                if mi.get('status') == 'FINISHED':
+                    c_it = mi.get('homeTeam', {}).get('shortName', mi.get('homeTeam', {}).get('name', '')).lower()
+                    o_it = mi.get('awayTeam', {}).get('shortName', mi.get('awayTeam', {}).get('name', '')).lower()
+                    score = mi.get('score', {}).get('fullTime', {})
+                    hg = score.get('home', 0)
+                    ag = score.get('away', 0)
+                    risultati_reali_ieri[f"{c_it}_vs_{o_it}"] = {"hg": hg, "ag": ag}
+
+        # Controlliamo i pronostici salvati per la data di ieri
+        if ieri in storico_data:
+            for match_key, pronostico_salvato in storico_data[ieri].items():
+                if match_key in risultati_reali_ieri:
+                    res = risultati_reali_ieri[match_key]
+                    hg, ag = res["hg"], res["ag"]
+                    tot_g = hg + ag
+                    
+                    bet = pronostico_salvato["bet_type"]
+                    vinta = False
+                    
+                    # Logica di verifica dinamica in base al tipo di pronostico salvato
+                    if bet == "Segno 1": vinta = hg > ag
+                    elif bet == "Segno X": vinta = hg == ag
+                    elif bet == "Segno 2": vinta = hg < ag
+                    elif bet == "Doppia 1X": vinta = hg >= ag
+                    elif bet == "Doppia X2": vinta = hg <= ag
+                    elif "Over 1.5" in bet: vinta = tot_g > 1.5
+                    elif "Under 1.5" in bet: vinta = tot_g < 1.5
+                    elif "Over 2.5" in bet: vinta = tot_g > 2.5
+                    elif "Under 2.5" in bet: vinta = tot_g < 2.5
+                    elif "Over 3.5" in bet: vinta = tot_g > 3.5
+                    elif "Goal (BTTS)" in bet: vinta = hg > 0 and ag > 0
+                    else: vinta = hg > ag # Default di fallback
+                    
+                    icona = "✅" if vinta else "❌"
+                    partite_nomi = match_key.replace("_vs_", " vs ").title()
+                    report_ieri_lines.append(f"• {partite_nomi} ({hg}-{ag}) ➔ {bet} {icona}")
 
     # ==========================================
     # 📥 4. RECUPERO QUOTE & PARTITE ODIERNE
@@ -236,6 +259,7 @@ try:
             classifiche_cache[comp_id] = {}
 
     partite_analizzate = []
+    nuovo_storico_oggi = {}
 
     for m in raw_matches:
         comp_id = m.get('competition', {}).get('id')
@@ -262,11 +286,27 @@ try:
         best_bet = evaluate_best_bet(probs, match_odds)
         is_rinviata = status_match in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
 
+        # Salviamo il pronostico di oggi per poterlo verificare domani
+        match_key = f"{casa.lower()}_vs_{ospite.lower()}"
+        if best_bet['is_value']:
+            nuovo_storico_oggi[match_key] = {"bet_type": best_bet['bet_type']}
+
         partite_analizzate.append({
             "casa": casa, "ospite": ospite,
             "status": status_match, "is_rinviata": is_rinviata,
             "best_bet": best_bet
         })
+
+    # Aggiorniamo il file dello storico salvando i pronostici di oggi
+    storico_completo = {}
+    if os.path.exists(STORICO_FILE):
+        with open(STORICO_FILE, "r") as f:
+            try: storico_completo = json.load(f)
+            except: storico_completo = {}
+            
+    storico_completo[oggi] = nuovo_storico_oggi
+    with open(STORICO_FILE, "w") as f:
+        json.dump(storico_completo, f, indent=4)
 
     partite_analizzate.sort(key=lambda x: -x['best_bet']['edge'])
 
@@ -333,16 +373,15 @@ try:
     print(f"✅ PDF definitivo generato: {pdf_filename}")
 
     # ==========================================
-    # 📤 6. INVIO TELEGRAM CON REPORT IERI
+    # 📤 6. INVIO TELEGRAM CON BILANCIO CORRETTO
     # ==========================================
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     
-    # Costruiamo il testo del report di ieri da inserire nella caption
     caption_text = f"🧠 *Report Quantitativo Definitivo del {oggi}* 🚀\n\n"
     if report_ieri_lines:
-        caption_text += f"📊 *Bilancio Partite di Ieri ({ieri}):*\n" + "\n".join(report_ieri_lines[:8])
+        caption_text += f"📊 *Bilancio Pronostici di Ieri ({ieri}):*\n" + "\n".join(report_ieri_lines[:8])
     else:
-        caption_text += f"📊 *Bilancio Ieri ({ieri}):* Nessun dato completato disponibile."
+        caption_text += f"📊 *Bilancio Ieri ({ieri}):* Nessun pronostico registrato nello storico o partite non ancora concluse."
 
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
@@ -353,7 +392,7 @@ try:
         res_tg = requests.post(telegram_url, data=payload, files=files)
         
     if res_tg.status_code == 200:
-        print("✅ Report e bilancio inviati con successo su Telegram!")
+        print("✅ Report e bilancio storico inviati con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res_tg.text}")
 
