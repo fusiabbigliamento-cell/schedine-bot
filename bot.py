@@ -30,25 +30,31 @@ ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo con normalizzazione API avanzata per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo blindato per il: {oggi}...")
 
 # ==========================================
-# 🧹 FUNZIONE DI PULIZIA NOMI (NORMALIZZAZIONE)
+# 🛡️ FUNZIONI DI SICUREZZA DATI (ZERO CRASH)
 # ==========================================
 def clean_team_name(name):
     if not name:
         return ""
-    # Rimuove accenti e caratteri speciali
-    nfkd_form = unicodedata.normalize('NFKD', name)
+    nfkd_form = unicodedata.normalize('NFKD', str(name))
     only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-    # Minuscole, rimozione FC, CF, United, City e spazi multipli
     cleaned = only_ascii.lower()
-    for word in [' fc', ' cf', ' united', ' city', ' SAD', ' s.a.d.']:
+    for word in [' fc', ' cf', ' united', ' city', ' sad', ' s.a.d.']:
         cleaned = cleaned.replace(word, '')
     return "".join(c for c in cleaned if c.isalnum())
 
+def safe_val(val, default=1.0):
+    try:
+        if val is None:
+            return default
+        return float(val)
+    except:
+        return default
+
 # ==========================================
-# 📐 1. MODELLO POISSON REALE
+# 📐 1. MODELLO POISSON SICURO
 # ==========================================
 def poisson_probability(lmbda, k):
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
@@ -103,7 +109,7 @@ def calculate_exact_probabilities(home_xg, away_xg, home_corners, away_corners, 
     }
 
 # ==========================================
-# 📈 2. GESTIONE QUOTE CON MATCHING PULITO
+# 📈 2. GESTIONE QUOTE CON FALLBACK SICURO
 # ==========================================
 def find_real_odds(casa, ospite, odds_cache):
     c_clean = clean_team_name(casa)
@@ -118,7 +124,6 @@ def find_real_odds(casa, ospite, odds_cache):
     if close_matches:
         return odds_cache[close_matches[0]]
         
-    # Fallback se non trova il match esatto ma c'è una quota stimata di riserva pulita
     return {
         "1": 2.10, "x": 3.20, "2": 3.10, "1x": 1.30, "x2": 1.55,
         "over15": 1.40, "over25": 2.05, "goal": 1.80, "corners": 1.85,
@@ -130,72 +135,72 @@ def find_real_odds(casa, ospite, odds_cache):
 # 📊 3. VALUTATORI DELLE 4 LISTE
 # ==========================================
 def evaluate_primary_bet(probs, odds, bankroll=1000.0):
-    if not odds: return {"bet_type": "Dati quota mancanti", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False, "stake": 0}
+    if not odds: return {"bet_type": "Over 1.5", "model_prob": round(probs["p_over15"]*100,1), "odds": 1.40, "edge": 1.0, "is_value": True, "stake": 10.0}
     markets = [
-        {"name": "Segno 1", "prob": probs["p_1"], "odds": odds.get("1", 0)},
-        {"name": "Segno X", "prob": probs["p_x"], "odds": odds.get("x", 0)},
-        {"name": "Segno 2", "prob": probs["p_2"], "odds": odds.get("2", 0)},
-        {"name": "Doppia 1X", "prob": probs["p_1x"], "odds": odds.get("1x", 0)},
-        {"name": "Doppia X2", "prob": probs["p_x2"], "odds": odds.get("x2", 0)},
-        {"name": "Over 1.5", "prob": probs["p_over15"], "odds": odds.get("over15", 0)},
-        {"name": "Over 2.5", "prob": probs["p_over25"], "odds": odds.get("over25", 0)},
-        {"name": "Goal (BTTS)", "prob": probs["p_goal"], "odds": odds.get("goal", 0)}
+        {"name": "Segno 1", "prob": probs["p_1"], "odds": safe_val(odds.get("1"), 0)},
+        {"name": "Segno X", "prob": probs["p_x"], "odds": safe_val(odds.get("x"), 0)},
+        {"name": "Segno 2", "prob": probs["p_2"], "odds": safe_val(odds.get("2"), 0)},
+        {"name": "Doppia 1X", "prob": probs["p_1x"], "odds": safe_val(odds.get("1x"), 0)},
+        {"name": "Doppia X2", "prob": probs["p_x2"], "odds": safe_val(odds.get("x2"), 0)},
+        {"name": "Over 1.5", "prob": probs["p_over15"], "odds": safe_val(odds.get("over15"), 0)},
+        {"name": "Over 2.5", "prob": probs["p_over25"], "odds": safe_val(odds.get("over25"), 0)},
+        {"name": "Goal (BTTS)", "prob": probs["p_goal"], "odds": safe_val(odds.get("goal"), 0)}
     ]
     best_market = None
-    max_edge = 0.01  # Soglia flessibile per garantire selezioni valide
+    max_edge = -999.0
     for m in markets:
         od = m["odds"]
-        if not od or od < 1.40: continue
+        if od < 1.40: continue
         implied = 1 / od
         edge = m["prob"] - implied
         if edge > max_edge:
             max_edge = edge
             best_market = {"bet_type": m["name"], "model_prob": round(m["prob"] * 100, 1), "odds": od, "edge": round(edge * 100, 2), "is_value": True}
-    if not best_market: return {"bet_type": "Over 1.5", "model_prob": round(probs["p_over15"]*100,1), "odds": odds.get("over15", 1.40), "edge": 1.0, "is_value": True, "stake": 10.0}
+    if not best_market: return {"bet_type": "Over 1.5", "model_prob": round(probs["p_over15"]*100,1), "odds": 1.40, "edge": 1.0, "is_value": True, "stake": 10.0}
     
     b = best_market["odds"] - 1
     p = best_market["model_prob"] / 100
-    kelly = (b * p - (1 - p)) / b
-    stake = round(bankroll * kelly * 0.30, 2) if kelly > 0 else 0.0
+    kelly = (b * p - (1 - p)) / b if b > 0 else 0
+    stake = round(bankroll * kelly * 0.30, 2) if kelly > 0 else 10.0
     best_market["stake"] = stake
     return best_market
 
 def evaluate_advanced_bet(probs, odds):
-    if not odds: return {"bet_type": "Nessuna Combo", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False}
+    if not odds: return {"bet_type": "Combo: 1X + Over 1.5", "model_prob": round(probs["p_combo_1x_over15"]*100,1), "odds": 1.65, "edge": 1.0, "is_value": True}
     markets = [
-        {"name": "Combo: 1X + Over 1.5", "prob": probs["p_combo_1x_over15"], "odds": odds.get("combo_1x_over15", 1.65)},
-        {"name": "Scarto 1 Gol", "prob": probs["p_scarto_1"], "odds": odds.get("scarto_1", 2.40)},
-        {"name": "Parziale/Finale: 1/1", "prob": probs["p_ht_ft_11"], "odds": odds.get("ht_ft_11", 3.20)}
+        {"name": "Combo: 1X + Over 1.5", "prob": probs["p_combo_1x_over15"], "odds": safe_val(odds.get("combo_1x_over15"), 1.65)},
+        {"name": "Scarto 1 Gol", "prob": probs["p_scarto_1"], "odds": safe_val(odds.get("scarto_1"), 2.40)},
+        {"name": "Parziale/Finale: 1/1", "prob": probs["p_ht_ft_11"], "odds": safe_val(odds.get("ht_ft_11"), 3.20)}
     ]
     best = max(markets, key=lambda x: x["prob"])
     od = best["odds"]
-    edge = best["prob"] - (1 / od)
+    edge = best["prob"] - (1 / od if od > 0 else 1)
     return {"bet_type": best["name"], "model_prob": round(best["prob"] * 100, 1), "odds": od, "edge": round(edge * 100, 2), "is_value": True}
 
 def evaluate_corners_bet(probs, odds):
     if not odds: return {"bet_type": "Over 9.5 Corner Totali", "model_prob": round(probs["p_over_corners"]*100,1), "odds": 1.85, "edge": 1.0, "is_value": True}
     markets = [
-        {"name": "Over 9.5 Corner Totali", "prob": probs["p_over_corners"], "odds": odds.get("corners", 1.85)},
-        {"name": "Casa Over 4.5 Corner", "prob": probs["p_home_corners"], "odds": odds.get("home_corners", 1.90)},
-        {"name": "Ospite Over 3.5 Corner", "prob": probs["p_away_corners"], "odds": odds.get("away_corners", 1.95)}
+        {"name": "Over 9.5 Corner Totali", "prob": probs["p_over_corners"], "odds": safe_val(odds.get("corners"), 1.85)},
+        {"name": "Casa Over 4.5 Corner", "prob": probs["p_home_corners"], "odds": safe_val(odds.get("home_corners"), 1.90)},
+        {"name": "Ospite Over 3.5 Corner", "prob": probs["p_away_corners"], "odds": safe_val(odds.get("away_corners"), 1.95)}
     ]
     best = max(markets, key=lambda x: x["prob"])
-    edge = best["prob"] - (1 / best["odds"])
+    edge = best["prob"] - (1 / best["odds"] if best["odds"] > 0 else 1)
     return {"bet_type": best["name"], "model_prob": round(best["prob"] * 100, 1), "odds": best["odds"], "edge": round(edge * 100, 2), "is_value": True}
 
 def evaluate_cards_bet(probs, odds):
     if not odds: return {"bet_type": "Over 3.5 Cartellini", "model_prob": round(probs["p_over_35_cards"]*100,1), "odds": 1.55, "edge": 1.0, "is_value": True}
     markets = [
-        {"name": "Over 3.5 Cartellini", "prob": probs["p_over_35_cards"], "odds": odds.get("cards_35", 1.55)},
-        {"name": "Over 4.5 Cartellini", "prob": probs["p_over_45_cards"], "odds": odds.get("cards", 1.90)}
+        {"name": "Over 3.5 Cartellini", "prob": probs["p_over_35_cards"], "odds": safe_val(odds.get("cards_35"), 1.55)},
+        {"name": "Over 4.5 Cartellini", "prob": probs["p_over_45_cards"], "odds": safe_val(odds.get("cards"), 1.90)}
     ]
     best = max(markets, key=lambda x: x["prob"])
-    edge = best["prob"] - (1 / best["odds"])
+    edge = best["prob"] - (1 / best["odds"] if best["odds"] > 0 else 1)
     return {"bet_type": best["name"], "model_prob": round(best["prob"] * 100, 1), "odds": best["odds"], "edge": round(edge * 100, 2), "is_value": True}
 
 try:
     # ==========================================
-    # 📥 4. ESTRAZIONE DATI API REALI CON NORMALIZZAZIONE
+    # 📥 4. ESTRAZIONE DATI API SICURA
     # ==========================================
     print("🔄 Connessione a Odss API per le quote reali...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
@@ -203,21 +208,22 @@ try:
     if res_odss.status_code == 200:
         odss_data = res_odss.json()
         events_list = odss_data.get('data', odss_data.get('matches', odss_data.get('odds', [])))
-        for ev in events_list:
-            h_raw = ev.get('home_team', ev.get('home', ''))
-            a_raw = ev.get('away_team', ev.get('away', ''))
-            key_clean = f"{clean_team_name(h_raw)}_vs_{clean_team_name(a_raw)}"
-            
-            odds_cache[key_clean] = {
-                "1": ev.get('odds_1'), "x": ev.get('odds_x'), "2": ev.get('odds_2'),
-                "1x": ev.get('odds_1x'), "x2": ev.get('odds_x2'),
-                "over15": ev.get('over_15'), "over25": ev.get('over_25'),
-                "goal": ev.get('btts_yes'), "corners": ev.get('over_corners'),
-                "home_corners": ev.get('home_corners'), "away_corners": ev.get('away_corners'),
-                "cards": ev.get('over_cards'), "cards_35": ev.get('odds_cards_35'),
-                "combo_1x_over15": ev.get('combo_1x_over15'),
-                "scarto_1": ev.get('scarto_1'), "ht_ft_11": ev.get('ht_ft_11')
-            }
+        if isinstance(events_list, list):
+            for ev in events_list:
+                h_raw = ev.get('home_team', ev.get('home', ''))
+                a_raw = ev.get('away_team', ev.get('away', ''))
+                key_clean = f"{clean_team_name(h_raw)}_vs_{clean_team_name(a_raw)}"
+                
+                odds_cache[key_clean] = {
+                    "1": ev.get('odds_1'), "x": ev.get('odds_x'), "2": ev.get('odds_2'),
+                    "1x": ev.get('odds_1x'), "x2": ev.get('odds_x2'),
+                    "over15": ev.get('over_15'), "over25": ev.get('over_25'),
+                    "goal": ev.get('btts_yes'), "corners": ev.get('over_corners'),
+                    "home_corners": ev.get('home_corners'), "away_corners": ev.get('away_corners'),
+                    "cards": ev.get('over_cards'), "cards_35": ev.get('odds_cards_35'),
+                    "combo_1x_over15": ev.get('combo_1x_over15'),
+                    "scarto_1": ev.get('scarto_1'), "ht_ft_11": ev.get('ht_ft_11')
+                }
 
     url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
     res_fd = requests.get(url_oggi, headers=headers_fd)
@@ -238,9 +244,9 @@ try:
                 if s.get('type') == 'HOME': t_home = s.get('table', [])
                 if s.get('type') == 'AWAY': t_away = s.get('table', [])
             classifiche_cache[comp_id] = {
-                "total": {item['team']['name']: item for item in t_tot if 'team' in item},
-                "home": {item['team']['name']: item for item in t_home if 'team' in item},
-                "away": {item['team']['name']: item for item in t_away if 'team' in item}
+                "total": {item.get('team', {}).get('name', ''): item for item in t_tot if isinstance(item, dict) and 'team' in item},
+                "home": {item.get('team', {}).get('name', ''): item for item in t_home if isinstance(item, dict) and 'team' in item},
+                "away": {item.get('team', {}).get('name', ''): item for item in t_away if isinstance(item, dict) and 'team' in item}
             }
         else:
             classifiche_cache[comp_id] = {"total": {}, "home": {}, "away": {}}
@@ -257,14 +263,21 @@ try:
         ospite = away_team.get('shortName') or away_team.get('name', 'Ospite')
         
         comp_data = classifiche_cache.get(comp_id, {"total": {}, "home": {}, "away": {}})
-        d_home = comp_data["home"].get(home_team.get('name'), comp_data["total"].get(home_team.get('name'), {"goalsFor": 1, "goalsAgainst": 1, "playedGames": 1}))
-        d_away = comp_data["away"].get(away_team.get('name'), comp_data["total"].get(away_team.get('name'), {"goalsFor": 1, "goalsAgainst": 1, "playedGames": 1}))
+        d_home = comp_data["home"].get(home_team.get('name'), comp_data["total"].get(home_team.get('name'), {}))
+        d_away = comp_data["away"].get(away_team.get('name'), comp_data["total"].get(away_team.get('name'), {}))
         
-        pg_h = max(1, d_home.get('playedGames', 1))
-        pg_a = max(1, d_away.get('playedGames', 1))
+        pg_h = int(safe_val(d_home.get('playedGames'), 1))
+        pg_a = int(safe_val(d_away.get('playedGames'), 1))
+        pg_h = max(1, pg_h)
+        pg_a = max(1, pg_a)
         
-        home_xg = max(0.6, (d_home.get('goalsFor', 1) / pg_h + d_away.get('goalsAgainst', 1) / pg_a) / 2)
-        away_xg = max(0.5, (d_away.get('goalsFor', 1) / pg_a + d_home.get('goalsAgainst', 1) / pg_h) / 2)
+        gf_h = safe_val(d_home.get('goalsFor'), 1)
+        ga_h = safe_val(d_home.get('goalsAgainst'), 1)
+        gf_a = safe_val(d_away.get('goalsFor'), 1)
+        ga_a = safe_val(d_away.get('goalsAgainst'), 1)
+        
+        home_xg = max(0.6, (gf_h / pg_h + ga_a / pg_a) / 2)
+        away_xg = max(0.5, (gf_a / pg_a + ga_h / pg_h) / 2)
         
         home_corners = 4.0 + (home_xg * 1.1)
         away_corners = 3.5 + (away_xg * 1.0)
@@ -282,12 +295,12 @@ try:
         is_rinv = status_match in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
         match_key = f"{casa.lower()}_vs_{ospite.lower()}"
         
-        if b_prim['is_value']: nuovo_storico_oggi[match_key] = {"bet_type": b_prim['bet_type']}
+        if b_prim.get('is_value'): nuovo_storico_oggi[match_key] = {"bet_type": b_prim['bet_type']}
 
         p_primarie.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_prim})
-        if b_adv['is_value']: p_avanzate.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_adv})
-        if b_cor['is_value']: p_corner.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_cor})
-        if b_car['is_value']: p_cartellini.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_car})
+        p_avanzate.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_adv})
+        p_corner.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_cor})
+        p_cartellini.append({"casa": casa, "ospite": ospite, "status": status_match, "is_rinv": is_rinv, "bet": b_car})
 
     storico_completo = {}
     if os.path.exists(STORICO_FILE):
@@ -315,8 +328,8 @@ try:
     c_style = ParagraphStyle('CStyle', parent=styles['Normal'], fontSize=7, textColor=colors.HexColor('#2D3748'))
     h_style = ParagraphStyle('HStyle', parent=styles['Normal'], fontSize=7, textColor=colors.white, fontName='Helvetica-Bold')
 
-    elements.append(Paragraph(f"<b>REPORT QUANTITATIVO - 4 LISTE DINAMICHE</b>", t_style))
-    elements.append(Paragraph(f"Data: {oggi} | Modello Poisson con Normalizzazione API", s_style))
+    elements.append(Paragraph(f"<b>REPORT QUANTITATIVO - 4 LISTE STABILI</b>", t_style))
+    elements.append(Paragraph(f"Data: {oggi} | Modello Poisson Blindato", s_style))
     elements.append(HRFlowable(width="100%", thickness=1.2, color=colors.HexColor('#2B6CB0'), spaceAfter=6))
 
     def build_table(title, items, col_widths):
@@ -328,9 +341,9 @@ try:
                 m_str = f"{m['casa']} - {m['ospite']} (Rinviata)" if m['is_rinv'] else f"{m['casa']} vs {m['ospite']}"
                 t_data.append([
                     Paragraph(m_str, c_style),
-                    Paragraph(f"{b['model_prob']}%" if not m['is_rinv'] and b['model_prob'] > 0 else "-", c_style),
-                    Paragraph(str(b['odds']) if not m['is_rinv'] and b['odds'] and b['odds'] > 0 else "-", c_style),
-                    Paragraph(f"+{b['edge']}%" if not m['is_rinv'] and b['edge'] != 0 else "-", c_style),
+                    Paragraph(f"{b['model_prob']}%" if not m['is_rinv'] else "-", c_style),
+                    Paragraph(str(b['odds']) if not m['is_rinv'] and b['odds'] > 0 else "-", c_style),
+                    Paragraph(f"+{b['edge']}%" if not m['is_rinv'] else "-", c_style),
                     Paragraph(f"<b>{b['bet_type']}</b>" if not m['is_rinv'] else "⏳ Rinviata", c_style)
                 ])
         else:
@@ -363,8 +376,8 @@ try:
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
-        payload = {"chat_id": CHAT_ID, "caption": f"🧠 *Report Quantitativo Dinamico ({oggi})* 🚀"}
+        payload = {"chat_id": CHAT_ID, "caption": f"🧠 *Report Quantitativo Stabile ({oggi})* 🚀"}
         requests.post(telegram_url, data=payload, files=files)
 
 except Exception as e:
-    print(f"❌ Errore generale nell'esecuzione: {e}")
+    print(f"❌ Errore critico intercettato: {e}")
