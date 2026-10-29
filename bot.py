@@ -120,7 +120,7 @@ def evaluate_primary_bet(probs, odds, bankroll=1000.0):
     ]
     best_market = None
     max_edge = 0.03
-    for m iniciencies in markets:
+    for m in markets:
         od = m["odds"]
         if not od or od < 1.50: continue
         implied = 1 / od
