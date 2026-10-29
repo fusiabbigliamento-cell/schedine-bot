@@ -24,12 +24,26 @@ ODSS_URL = "https://odss-api.com/api/v1/odds?sport=calcio"
 headers_fd = {'X-Auth-Token': API_TOKEN}
 headers_odss = {'x-api-key': ODSS_KEY}
 
-oggi = datetime.now().strftime('%Y-%m-%d')
-ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+# ==========================================
+# 🕒 GESTIONE FINESTRA CALCISTICA (08:00 - 07:59)
+# ==========================================
+now_local = datetime.now()
+if now_local.hour < 8:
+    # Se sono le prime ore del mattino (es. dopo la mezzanotte), la "giornata calcistica" fa capo a ieri mattina
+    start_date = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
+    end_date = now_local.strftime('%Y-%m-%d')
+    ieri = (now_local - timedelta(days=2)).strftime('%Y-%m-%d')
+    oggi = (now_local - timedelta(days=1)).strftime('%Y-%m-%d') # Riferimento logico report
+else:
+    start_date = now_local.strftime('%Y-%m-%d')
+    end_date = (now_local + timedelta(days=1)).strftime('%Y-%m-%d')
+    ieri = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
+    oggi = now_local.strftime('%Y-%m-%d')
+
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo ad alta qualità per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo ad alta qualità (Finestra calcistica attiva) per il: {oggi}...")
 
 # ==========================================
 # 📐 1. FUNZIONE DI CALCOLO POISSON ESTESA
@@ -204,7 +218,7 @@ try:
                     report_ieri_lines.append(f"• {partite_nomi} ({hg}-{ag}) ➔ {bet} {icona}")
 
     # ==========================================
-    # 📥 4. RECUPERO QUOTE & PARTITE ODIERNE
+    # 📥 4. RECUPERO QUOTE & PARTITE ODIERNE (FINESTRA 08:00 - 07:59)
     # ==========================================
     print("🔄 Connessione a Odss API per scaricare le quote...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
@@ -234,12 +248,28 @@ try:
                 "shots": ev.get('over_shots', 1.85)
             }
 
-    url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
-    res_fd = requests.get(url_oggi, headers=headers_fd)
+    # Intervallo temporale pulito per catturare l'intera giornata calcistica
+    url_matches = f"https://api.football-data.org/v4/matches?dateFrom={start_date}&dateTo={end_date}"
+    res_fd = requests.get(url_matches, headers=headers_fd)
     time.sleep(2)
     
-    raw_matches = res_fd.json().get('matches', []) if res_fd.status_code == 200 else []
-    print(f"✅ Trovate {len(raw_matches)} partite nel palinsesto odierno.")
+    all_fetched_matches = res_fd.json().get('matches', []) if res_fd.status_code == 200 else []
+    
+    # Filtriamo rigorosamente i match che rientrano nella finestra attiva dalle 08:00 in poi del giorno di riferimento
+    raw_matches = []
+    threshold_start = datetime.strptime(f"{oggi} 08:00:00", "%Y-%m-%d %H:%M:%S")
+    threshold_end = threshold_start + timedelta(hours=24)
+
+    for m in all_fetched_matches:
+        utc_date_str = m.get('utcDate')
+        if utc_date_str:
+            # L'API restituisce stringhe tipo '2026-10-30T19:00:00Z'
+            match_dt = datetime.strptime(utc_date_str.replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
+            # Convertiamo grossolanamente in orario locale o filtriamo per giorno effettivo di competenza
+            if start_date <= utc_date_str[:10] <= end_date:
+                raw_matches.append(m)
+
+    print(f"✅ Trovate {len(raw_matches)} partite valide nella finestra calcistica.")
 
     comp_ids = set(m.get('competition', {}).get('id') for m in raw_matches if m.get('competition', {}).get('id'))
     classifiche_cache = {}
