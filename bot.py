@@ -210,6 +210,7 @@ try:
     # ==========================================
     print("🔄 Connessione a Odss API per scaricare le quote...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
+    print(f"DEBUG ODSS - Status: {res_odss.status_code} | Risposta: {res_odss.text[:400]}")
     odds_cache = {}
     if res_odss.status_code == 200:
         odss_data = res_odss.json()
