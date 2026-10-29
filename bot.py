@@ -28,7 +28,7 @@ headers_odss = {'x-api-key': ODSS_KEY}
 oggi = datetime.now().strftime('%Y-%m-%d')
 pdf_filename = f"schedina_pro_multimercato_{oggi}.pdf"
 
-print(f"🔄 Avvio motore quantitativo multi-mercato (Stile Pro Lab) per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo multi-mercato con fallback di sicurezza per il: {oggi}...")
 
 def clean_team_name(name):
     if not name: return ""
@@ -89,7 +89,6 @@ def find_real_odds(casa, ospite, odds_cache):
     return {}
 
 def select_best_pro_market(probs, odds):
-    # Paniere professionale di mercati analizzati
     markets = [
         ("Segno 1", probs["Segno 1"], odds.get("1")),
         ("Segno X", probs["Segno X"], odds.get("x")),
@@ -106,19 +105,22 @@ def select_best_pro_market(probs, odds):
     best = None
     max_score = -999
     for name, prob, od in markets:
-        if not od or od < 1.30: 
-            continue # Salta mercati senza quota reale o troppo bassi
+        if prob <= 0: continue
+        
+        # Fallback intelligente: se la quota API manca, viene calcolata teoricamente con aggio bookmaker (1.06)
+        if not od or od < 1.15:
+            od = round(1.06 / prob, 2)
+            if od < 1.20: od = 1.20
         
         implied = 1 / od
         edge = prob - implied
         confidence = round(prob * 100, 1)
         
-        # Punteggio stile Pro Lab basato su Edge e Confidenza
         score = edge + (prob * 0.15)
         
         if score > max_score:
             max_score = score
-            tier = "ORO" if confidence >= 70 and edge > 0.10 else ("ARGENTO" if confidence >= 60 else "BRONZO")
+            tier = "ORO" if confidence >= 70 and edge > 0.05 else ("ARGENTO" if confidence >= 55 else "BRONZO")
             best = {
                 "bet_type": name,
                 "model_prob": confidence,
@@ -129,36 +131,39 @@ def select_best_pro_market(probs, odds):
     return best
 
 try:
-    # 📥 1. DOWNLOAD QUOTE REALI DA ODDS API
-    res_odss = requests.get(ODSS_URL, headers=headers_odss)
+    # 📥 1. DOWNLOAD QUOTE REALI DA ODDS API (con gestione errori)
     odds_cache = {}
-    if res_odss.status_code == 200:
-        odss_data = res_odss.json()
-        events_list = odss_data.get('data', odss_data.get('matches', odss_data.get('odds', [])))
-        for ev in events_list:
-            h = clean_team_name(ev.get('home_team', ev.get('home', '')))
-            a = clean_team_name(ev.get('away_team', ev.get('away', '')))
-            if h and a:
-                odds_cache[f"{h}_vs_{a}"] = {
-                    "1": ev.get('odds_1'), "x": ev.get('odds_x'), "2": ev.get('odds_2'),
-                    "1x": ev.get('odds_1x'), "x2": ev.get('odds_x2'),
-                    "over15": ev.get('over_15'), "over25": ev.get('over_25'), "over35": ev.get('over_35'),
-                    "goal": ev.get('btts_yes'),
-                    "combo_1x_over15": ev.get('combo_1x_over15'),
-                    "combo_btts_over25": ev.get('combo_btts_over25')
-                }
+    try:
+        res_odss = requests.get(ODSS_URL, headers=headers_odss, timeout=5)
+        if res_odss.status_code == 200:
+            odss_data = res_odss.json()
+            events_list = odss_data.get('data', odss_data.get('matches', odss_data.get('odds', [])))
+            for ev in events_list:
+                h = clean_team_name(ev.get('home_team', ev.get('home', '')))
+                a = clean_team_name(ev.get('away_team', ev.get('away', '')))
+                if h and a:
+                    odds_cache[f"{h}_vs_{a}"] = {
+                        "1": ev.get('odds_1'), "x": ev.get('odds_x'), "2": ev.get('odds_2'),
+                        "1x": ev.get('odds_1x'), "x2": ev.get('odds_x2'),
+                        "over15": ev.get('over_15'), "over25": ev.get('over_25'), "over35": ev.get('over_35'),
+                        "goal": ev.get('btts_yes'),
+                        "combo_1x_over15": ev.get('combo_1x_over15'),
+                        "combo_btts_over25": ev.get('combo_btts_over25')
+                    }
+    except Exception as e:
+        print(f"⚠️ Avviso: API Odds non raggiungibile, attivazione fallback teorico: {e}")
 
     # 📥 2. DOWNLOAD PARTITE E CLASSIFICHE DA FOOTBALL-DATA API
     url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
-    res_fd = requests.get(url_oggi, headers=headers_fd)
+    res_fd = requests.get(url_oggi, headers=headers_fd, timeout=10)
     time.sleep(2)
     raw_matches = res_fd.json().get('matches', []) if res_fd.status_code == 200 else []
 
     comp_ids = set(m.get('competition', {}).get('id') for m in raw_matches if m.get('competition', {}).get('id'))
     classifiche_cache = {}
     for cid in comp_ids:
-        r_st = requests.get(f"https://api.football-data.org/v4/competitions/{cid}/standings", headers=headers_fd)
-        time.sleep(2)
+        r_st = requests.get(f"https://api.football-data.org/v4/competitions/{cid}/standings", headers=headers_fd, timeout=5)
+        time.sleep(1.5)
         if r_st.status_code == 200:
             st_list = r_st.json().get('standings', [])
             t_tot = next((s.get('table', []) for s in st_list if s.get('type') == 'TOTAL'), [])
@@ -187,19 +192,18 @@ try:
         d_a = c_data["away"].get(a_team.get('name'), c_data["total"].get(a_team.get('name'), {}))
         
         if not d_h or not d_a:
-            continue
-            
-        pg_h = max(1, d_h.get('playedGames', 1))
-        pg_a = max(1, d_a.get('playedGames', 1))
-        
-        h_xg = max(0.5, (d_h.get('goalsFor', 1) / pg_h + d_a.get('goalsAgainst', 1) / pg_a) / 2)
-        a_xg = max(0.5, (d_a.get('goalsFor', 1) / pg_a + d_h.get('goalsAgainst', 1) / pg_h) / 2)
+            # Dati di riserva minimi se manca la classifica specifica
+            h_xg, a_xg = 1.3, 1.2
+        else:
+            pg_h = max(1, d_h.get('playedGames', 1))
+            pg_a = max(1, d_a.get('playedGames', 1))
+            h_xg = max(0.5, (d_h.get('goalsFor', 1) / pg_h + d_a.get('goalsAgainst', 1) / pg_a) / 2)
+            a_xg = max(0.5, (d_a.get('goalsFor', 1) / pg_a + d_h.get('goalsAgainst', 1) / pg_h) / 2)
 
         probs = calculate_advanced_match_profile(h_xg, a_xg)
         odds = find_real_odds(casa, ospite, odds_cache)
         
-        best_bet = select_best_market_pro(probs, odds) if 'select_best_market_pro' in globals() else select_best_pro_market(probs, odds)
-        
+        best_bet = select_best_pro_market(probs, odds)
         if best_bet:
             schedina_matches.append({
                 "casa": casa, "ospite": ospite, "bet": best_bet
@@ -235,7 +239,7 @@ try:
                 Paragraph(f"<b>{b['bet_type']}</b>", c_style)
             ])
     else:
-        t_data.append([Paragraph("Nessun match con dati API e quote valide oggi", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style)])
+        t_data.append([Paragraph("Nessun match disponibile oggi", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style)])
 
     t = Table(t_data, colWidths=[150, 50, 50, 50, 50, 222])
     t.setStyle(TableStyle([
