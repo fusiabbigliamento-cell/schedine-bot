@@ -26,9 +26,9 @@ headers_fd = {'X-Auth-Token': API_TOKEN}
 headers_odss = {'x-api-key': ODSS_KEY}
 
 oggi = datetime.now().strftime('%Y-%m-%d')
-pdf_filename = f"schedina_value_pro_{oggi}.pdf"
+pdf_filename = f"schedina_deterministica_{oggi}.pdf"
 
-print(f"🔄 Avvio motore Value Betting ad alto rendimento (Quota alta & Edge netto) per il: {oggi}...")
+print(f"🔄 Avvio motore deterministico stabile (Zero oscillazioni) per il: {oggi}...")
 
 def clean_team_name(name):
     if not name: return ""
@@ -43,11 +43,11 @@ def poisson_probability(lmbda, k):
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
 
 # ==========================================
-# 📐 MODELLO POISSON & COMBO AVANZATE
+# 📐 MODELLO MATEMATICO FISSO E DETERMINISTICO
 # ==========================================
-def calculate_high_value_profile(home_xg, away_xg):
+def calculate_stable_probabilities(home_xg, away_xg):
     home_win, draw, away_win = 0, 0, 0
-    over_15, over_25, over_35 = 0, 0, 0
+    over_15, over_25 = 0, 0
     btts = 0
     
     for h in range(6):
@@ -60,7 +60,6 @@ def calculate_high_value_profile(home_xg, away_xg):
             tot_g = h + a
             if tot_g > 1.5: over_15 += p
             if tot_g > 2.5: over_25 += p
-            if tot_g > 3.5: over_35 += p
             if h > 0 and a > 0: btts += p
 
     p_1x = home_win + draw
@@ -69,11 +68,7 @@ def calculate_high_value_profile(home_xg, away_xg):
     return {
         "Segno 1": home_win, "Segno X": draw, "Segno 2": away_win,
         "Doppia 1X": p_1x, "Doppia X2": p_x2,
-        "Over 2.5": over_25, "Over 3.5": over_35,
-        "Goal (BTTS)": btts,
-        "Combo: 1X + Over 1.5": p_1x * over_15,
-        "Combo: X2 + Over 1.5": p_x2 * over_15,
-        "Combo: Goal + Over 2.5": btts * over_25
+        "Over 1.5": over_15, "Over 2.5": over_25, "Goal (BTTS)": btts
     }
 
 def find_real_odds(casa, ospite, odds_cache):
@@ -85,19 +80,17 @@ def find_real_odds(casa, ospite, odds_cache):
     if matches: return odds_cache[matches[0]]
     return {}
 
-def select_high_value_market(probs, odds):
+def select_stable_market(probs, odds):
+    # Paniere standard e trasparente dei mercati principali
     markets = [
         ("Segno 1", probs["Segno 1"], odds.get("1")),
         ("Segno X", probs["Segno X"], odds.get("x")),
         ("Segno 2", probs["Segno 2"], odds.get("2")),
         ("Doppia 1X", probs["Doppia 1X"], odds.get("1x")),
         ("Doppia X2", probs["Doppia X2"], odds.get("x2")),
+        ("Over 1.5", probs["Over 1.5"], odds.get("over15")),
         ("Over 2.5", probs["Over 2.5"], odds.get("over25")),
-        ("Over 3.5", probs["Over 3.5"], odds.get("over35")),
-        ("Goal (BTTS)", probs["Goal (BTTS)"], odds.get("goal")),
-        ("Combo: 1X + Over 1.5", probs["Combo: 1X + Over 1.5"], odds.get("combo_1x_over15")),
-        ("Combo: X2 + Over 1.5", probs["Combo: X2 + Over 1.5"], odds.get("combo_x2_over15")),
-        ("Combo: Goal + Over 2.5", probs["Combo: Goal + Over 2.5"], odds.get("combo_btts_over25"))
+        ("Goal (BTTS)", probs["Goal (BTTS)"], odds.get("goal"))
     ]
     
     best = None
@@ -105,28 +98,21 @@ def select_high_value_market(probs, odds):
     for name, prob, od in markets:
         if prob <= 0: continue
         
-        # Fallback o stima quota teorica se manca l'API
-        if not od or od < 1.70:
-            if not od:
-                od = round(1.05 / prob, 2)
-            if od < 1.70: 
-                continue # SCARTA RIGOROSAMENTE QUOTE SOTTO 1.70
-        
+        # Gestione quota reale o fallback teorico coerente e fisso
+        if not od or od < 1.20:
+            od = round(1.05 / prob, 2)
+            if od < 1.30: od = 1.30
+            
         implied = 1 / od
         edge = prob - implied
         
-        # FILTRO DI FERRO: Vogliamo solo Edge netto positivo e marcato
-        if edge < 0.02: 
-            continue 
-            
-        confidence = round(prob * 100, 1)
-        
-        # Punteggio che premia quota alta ed Edge reale
-        score = edge * od * 100
+        # Punteggio puramente oggettivo basato sul valore atteso (Edge)
+        score = edge
         
         if score > max_score:
             max_score = score
-            tier = "ORO" if edge >= 0.08 and od >= 2.00 else "ARGENTO"
+            confidence = round(prob * 100, 1)
+            tier = "ORO" if confidence >= 65 and edge > 0.05 else "ARGENTO"
             best = {
                 "bet_type": name,
                 "model_prob": confidence,
@@ -137,7 +123,7 @@ def select_high_value_market(probs, odds):
     return best
 
 try:
-    # 📥 1. DOWNLOAD QUOTE REALI
+    # 📥 1. DOWNLOAD QUOTE
     odds_cache = {}
     try:
         res_odss = requests.get(ODSS_URL, headers=headers_odss, timeout=5)
@@ -151,14 +137,11 @@ try:
                     odds_cache[f"{h}_vs_{a}"] = {
                         "1": ev.get('odds_1'), "x": ev.get('odds_x'), "2": ev.get('odds_2'),
                         "1x": ev.get('odds_1x'), "x2": ev.get('odds_x2'),
-                        "over25": ev.get('over_25'), "over35": ev.get('over_35'),
-                        "goal": ev.get('btts_yes'),
-                        "combo_1x_over15": ev.get('combo_1x_over15'),
-                        "combo_x2_over15": ev.get('combo_x2_over15'),
-                        "combo_btts_over25": ev.get('combo_btts_over25')
+                        "over15": ev.get('over_15'), "over25": ev.get('over_25'),
+                        "goal": ev.get('btts_yes')
                     }
     except Exception as e:
-        print(f"⚠️ API Odds non disponibile: {e}")
+        print(f"⚠️ API Odds non disponibile, uso calcolo deterministico: {e}")
 
     # 📥 2. DOWNLOAD PARTITE E CLASSIFICHE FOOTBALL-DATA
     url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
@@ -199,26 +182,26 @@ try:
         d_a = c_data["away"].get(a_team.get('name'), c_data["total"].get(a_team.get('name'), {}))
         
         if not d_h or not d_a:
-            h_xg, a_xg = 1.4, 1.1
+            h_xg, a_xg = 1.3, 1.2
         else:
             pg_h = max(1, d_h.get('playedGames', 1))
             pg_a = max(1, d_a.get('playedGames', 1))
             h_xg = max(0.5, (d_h.get('goalsFor', 1) / pg_h + d_a.get('goalsAgainst', 1) / pg_a) / 2)
             a_xg = max(0.5, (d_a.get('goalsFor', 1) / pg_a + d_h.get('goalsAgainst', 1) / pg_h) / 2)
 
-        probs = calculate_high_value_profile(h_xg, a_xg)
+        probs = calculate_stable_probabilities(h_xg, a_xg)
         odds = find_real_odds(casa, ospite, odds_cache)
         
-        best_bet = select_high_value_market(probs, odds)
+        best_bet = select_stable_market(probs, odds)
         if best_bet:
             schedina_matches.append({
                 "casa": casa, "ospite": ospite, "bet": best_bet
             })
 
-    # Ordiniamo per Edge ed entità della quota (valore puro)
-    schedina_matches.sort(key=lambda x: -(x['bet']['edge'] * x['bet']['odds']))
+    # Ordinamento stabile e coerente per Edge decrescente
+    schedina_matches.sort(key=lambda x: -x['bet']['edge'])
 
-    # 📄 GENERAZIONE PDF PROFESSIONALE
+    # 📄 GENERAZIONE PDF
     doc = SimpleDocTemplate(pdf_filename, pagesize=letter, rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25)
     elements = []
     styles = getSampleStyleSheet()
@@ -228,8 +211,8 @@ try:
     c_style = ParagraphStyle('CStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#2D3748'))
     h_style = ParagraphStyle('HStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.white, fontName='Helvetica-Bold')
 
-    elements.append(Paragraph(f"<b>REPORT VALUE BETTING — ALTO RENDIMENTO & COMBO</b>", t_style))
-    elements.append(Paragraph(f"Data: {oggi} | Selezione Rigorosa: Solo Quote >= 1.70 e Edge Netto Positivo", s_style))
+    elements.append(Paragraph(f"<b>REPORT DETERMINISTICO STABILE</b>", t_style))
+    elements.append(Paragraph(f"Data: {oggi} | Modello Matematico Fisso e Coerente", s_style))
     elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#2B6CB0'), spaceAfter=10))
 
     t_data = [[Paragraph(f"<b>{h}</b>", h_style) for h in ["Match", "Tier", "Conf.", "Quota", "Edge %", "Pronostico Consigliato"]]]
@@ -242,11 +225,11 @@ try:
                 Paragraph(f"<b>{b['tier']}</b>", c_style),
                 Paragraph(f"{b['model_prob']}%", c_style),
                 Paragraph(str(b['odds']), c_style),
-                Paragraph(f"+{b['edge']}%", c_style),
+                Paragraph(f"+{b['edge']}%" if b['edge'] > 0 else f"{b['edge']}%", c_style),
                 Paragraph(f"<b>{b['bet_type']}</b>", c_style)
             ])
     else:
-        t_data.append([Paragraph("Nessun match con requisiti di valore elevato oggi", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style)])
+        t_data.append([Paragraph("Nessun match disponibile oggi", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style), Paragraph("-", c_style)])
 
     t = Table(t_data, colWidths=[150, 50, 50, 50, 50, 222])
     t.setStyle(TableStyle([
@@ -265,7 +248,7 @@ try:
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
-        payload = {"chat_id": CHAT_ID, "caption": f"🧠 *Report Value Betting Alta Quota ({oggi})* 🚀"}
+        payload = {"chat_id": CHAT_ID, "caption": f"🧠 *Report Deterministico Stabile ({oggi})* 🚀"}
         requests.post(telegram_url, data=payload, files=files)
 
 except Exception as e:
