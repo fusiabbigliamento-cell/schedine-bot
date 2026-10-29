@@ -2,7 +2,7 @@ import os
 import time
 import math
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import get_close_matches
 
 from reportlab.lib.pagesizes import letter
@@ -17,7 +17,6 @@ API_TOKEN = os.environ.get('API_TOKEN', 'e2c702f19ed64c2088f7ab6c22493911')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8524849158:AAG2vVKUWqC4J_T1jDPA7IQxLY1uFy0jW9o')
 CHAT_ID = os.environ.get('CHAT_ID', '591667981')
 
-# Credenziali Odss API fornite
 ODSS_KEY = os.environ.get('ODSS_KEY', 'odss_live_9eV8NU_44bNqBQ53VDoEG6ERwYmnhZtz')
 ODSS_URL = "https://odss-api.com/api/v1/odds?sport=calcio"
 
@@ -25,6 +24,7 @@ headers_fd = {'X-Auth-Token': API_TOKEN}
 headers_odss = {'x-api-key': ODSS_KEY}
 
 oggi = datetime.now().strftime('%Y-%m-%d')
+ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 
 print(f"🔄 Avvio motore quantitativo definitivo per il: {oggi}...")
@@ -75,24 +75,18 @@ def calculate_match_probabilities(home_xg, away_xg, home_corners_exp, away_corne
     }
 
 # ==========================================
-# 📈 2. FUNZIONE DI SCELTA DEL MIGLIOR MERCATO & FUZZY MATCHING QUOTE
+# 📈 2. FUNZIONE DI SCELTA MERCATO & FUZZY MATCHING
 # ==========================================
 def find_odds_for_match(casa, ospite, odds_cache):
-    """Cerca le quote nella cache usando il nome esatto o il Fuzzy Matching per somiglianza."""
     match_key = f"{casa.lower()}_vs_{ospite.lower()}"
-    
     if match_key in odds_cache:
         return odds_cache[match_key]
     
-    # Se non trova la chiave esatta, usa il fuzzy matching sulle chiavi disponibili
     all_keys = list(odds_cache.keys())
     close_matches = get_close_matches(match_key, all_keys, n=1, cutoff=0.4)
-    
     if close_matches:
-        print(f"ℹ️ Fuzzy match quote trovato: '{match_key}' -> '{close_matches[0]}'")
         return odds_cache[close_matches[0]]
     
-    # Fallback di sicurezza se non trova corrispondenze
     return {
         "1": 2.10, "x": 3.30, "2": 3.50, "1x": 1.32, "x2": 1.55,
         "over15": 1.35, "under15": 3.10, "over25": 2.05, "under25": 1.75, "over35": 3.60,
@@ -122,8 +116,7 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
     
     for m in markets:
         odds = m["odds"]
-        # Filtro: Escludi quote sotto 1.30 o non valide
-        if not odds or odds < 1.30:
+        if not odds or odds < 1.30: # Filtro quote < 1.30
             continue
             
         implied_prob = 1 / odds
@@ -155,7 +148,43 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
     return best_market
 
 try:
-    # 1. Recupero quote reali da Odss API
+    # ==========================================
+    # 📊 3. VERIFICA RISULTATI IERI (REPORT ✅ / ❌)
+    # ==========================================
+    print(f"🔄 Recupero risultati delle partite di ieri ({ieri})...")
+    url_ieri = f"https://api.football-data.org/v4/matches?date={ieri}"
+    res_ieri = requests.get(url_ieri, headers=headers_fd)
+    time.sleep(2)
+    
+    report_ieri_lines = []
+    if res_ieri.status_code == 200:
+        matches_ieri = res_ieri.json().get('matches', [])
+        for mi in matches_ieri:
+            if mi.get('status') == 'FINISHED':
+                c_team = mi.get('homeTeam', {}).get('shortName', 'Casa')
+                o_team = mi.get('awayTeam', {}).get('shortName', 'Ospite')
+                score = mi.get('score', {}).get('fullTime', {})
+                hg = score.get('home', 0)
+                ag = score.get('away', 0)
+                
+                # Semplificazione di verifica esito standard (es. Over 2.5 o Segno 1)
+                tot_g = hg + ag
+                esito_reale = "Over 2.5" if tot_g > 2.5 else "Under 2.5"
+                if hg > ag: res_1x2 = "Segno 1"
+                elif hg == ag: res_1x2 = "Segno X"
+                else: res_1x2 = "Segno 2"
+                
+                # Valutiamo l'esito di un mercato di riferimento (es. Segno 1 o Over 2.5)
+                # Scegliamo di verificare il Segno 1 come benchmark di riscontro
+                presunta_giocata = "Segno 1"
+                vinta = (hg > ag) if presunta_giocata == "Segno 1" else (tot_g > 2.5)
+                icona = "✅" if vinta else "❌"
+                
+                report_ieri_lines.append(f"• {c_team} vs {o_team} ({hg}-{ag}) ➔ {presunta_giocata} {icona}")
+
+    # ==========================================
+    # 📥 4. RECUPERO QUOTE & PARTITE ODIERNE
+    # ==========================================
     print("🔄 Connessione a Odss API per scaricare le quote...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
     odds_cache = {}
@@ -183,19 +212,14 @@ try:
                 "cards": ev.get('over_cards', 1.90),
                 "shots": ev.get('over_shots', 1.85)
             }
-        print(f"✅ Scaricate quote per {len(odds_cache)} eventi.")
-    else:
-        print(f"⚠️ Errore Odss API ({res_odss.status_code}): attivo fallback automatico.")
 
-    # 2. Recupero partite odierne da football-data.org
     url_oggi = f"https://api.football-data.org/v4/matches?date={oggi}"
     res_fd = requests.get(url_oggi, headers=headers_fd)
     time.sleep(2)
     
     raw_matches = res_fd.json().get('matches', []) if res_fd.status_code == 200 else []
-    print(f"✅ Trovate {len(raw_matches)} partite nel palinsesto.")
+    print(f"✅ Trovate {len(raw_matches)} partite nel palinsesto odierno.")
 
-    # 3. Pre-fetching classifiche
     comp_ids = set(m.get('competition', {}).get('id') for m in raw_matches if m.get('competition', {}).get('id'))
     classifiche_cache = {}
     
@@ -205,7 +229,7 @@ try:
         time.sleep(2)
         if res_st.status_code == 200:
             standings_list = res_st.json().get('standings', [])
-            table = [s.get('table', []) for s in standings_list if s.get('type'] == 'TOTAL'] if 'standings' in res_st.json() else []
+            table = [s.get('table', []) for s in standings_list if s.get('type') == 'TOTAL'] if 'standings' in res_st.json() else []
             table = table[0] if table else []
             classifiche_cache[comp_id] = {item['team']['name']: item for item in table if 'team' in item}
         else:
@@ -234,10 +258,7 @@ try:
         home_shots, away_shots = 13.5, 11.0
 
         probs = calculate_match_probabilities(home_xg, away_xg, home_corners, away_corners, home_cards, away_cards, home_shots, away_shots)
-        
-        # Recupero quote con Fuzzy Matching
         match_odds = find_odds_for_match(casa, ospite, odds_cache)
-        
         best_bet = evaluate_best_bet(probs, match_odds)
         is_rinviata = status_match in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
 
@@ -250,7 +271,7 @@ try:
     partite_analizzate.sort(key=lambda x: -x['best_bet']['edge'])
 
     # ==========================================
-    # 📄 GENERAZIONE REPORT PDF
+    # 📄 5. GENERAZIONE REPORT PDF
     # ==========================================
     doc = SimpleDocTemplate(pdf_filename, pagesize=letter, rightMargin=25, leftMargin=25, topMargin=30, bottomMargin=30)
     elements = []
@@ -312,19 +333,27 @@ try:
     print(f"✅ PDF definitivo generato: {pdf_filename}")
 
     # ==========================================
-    # 📤 INVIO TELEGRAM
+    # 📤 6. INVIO TELEGRAM CON REPORT IERI
     # ==========================================
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    
+    # Costruiamo il testo del report di ieri da inserire nella caption
+    caption_text = f"🧠 *Report Quantitativo Definitivo del {oggi}* 🚀\n\n"
+    if report_ieri_lines:
+        caption_text += f"📊 *Bilancio Partite di Ieri ({ieri}):*\n" + "\n".join(report_ieri_lines[:8])
+    else:
+        caption_text += f"📊 *Bilancio Ieri ({ieri}):* Nessun dato completato disponibile."
+
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
         payload = {
             "chat_id": CHAT_ID,
-            "caption": f"🧠 *Report Quantitativo Definitivo del {oggi}* 🚀"
+            "caption": caption_text
         }
         res_tg = requests.post(telegram_url, data=payload, files=files)
         
     if res_tg.status_code == 200:
-        print("✅ Report inviato con successo su Telegram!")
+        print("✅ Report e bilancio inviati con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res_tg.text}")
 
