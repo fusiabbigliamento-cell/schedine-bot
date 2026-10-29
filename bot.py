@@ -29,7 +29,7 @@ ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo con storico intelligente per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo ad alta qualità per il: {oggi}...")
 
 # ==========================================
 # 📐 1. FUNZIONE DI CALCOLO POISSON ESTESA
@@ -77,7 +77,7 @@ def calculate_match_probabilities(home_xg, away_xg, home_corners_exp, away_corne
     }
 
 # ==========================================
-# 📈 2. FUNZIONE DI SCELTA MERCATO & FUZZY MATCHING
+# 📈 2. FUNZIONE DI SCELTA MERCATO & TUNING ALTA QUALITÀ
 # ==========================================
 def find_odds_for_match(casa, ospite, odds_cache):
     match_key = f"{casa.lower()}_vs_{ospite.lower()}"
@@ -114,11 +114,12 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
     ]
     
     best_market = None
-    max_edge = -999
+    max_edge = 0.03  # Richiediamo almeno il 3% di Edge (Alta Qualità)
     
     for m in markets:
         odds = m["odds"]
-        if not odds or odds < 1.30: 
+        # Quota minima alzata a 1.50
+        if not odds or odds < 1.50: 
             continue
             
         implied_prob = 1 / odds
@@ -131,20 +132,20 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
                 "model_prob": round(m["prob"] * 100, 1),
                 "odds": odds,
                 "edge": round(edge * 100, 2),
-                "is_value": edge > 0
+                "is_value": True
             }
             
     if not best_market:
-        return {"bet_type": "Nessuna (Filtro <1.30)", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False, "stake": 0}
+        return {"bet_type": "Nessuna (Filtro Alta Qualità)", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False, "stake": 0}
 
+    # Criterio di Kelly impostato al 30% (0.30)
     stake = 0.0
-    if best_market["is_value"]:
-        b = best_market["odds"] - 1
-        p = best_market["model_prob"] / 100
-        q = 1 - p
-        kelly_fraction = (b * p - q) / b
-        if kelly_fraction > 0:
-            stake = round(bankroll * kelly_fraction * 0.25, 2)
+    b = best_market["odds"] - 1
+    p = best_market["model_prob"] / 100
+    q = 1 - p
+    kelly_fraction = (b * p - q) / b
+    if kelly_fraction > 0:
+        stake = round(bankroll * kelly_fraction * 0.30, 2)
             
     best_market["stake"] = stake
     return best_market
@@ -220,9 +221,9 @@ try:
                 "1": ev.get('odds_1', ev.get('home_odds', 2.0)),
                 "x": ev.get('odds_x', ev.get('draw_odds', 3.2)),
                 "2": ev.get('odds_2', ev.get('away_odds', 3.0)),
-                "1x": ev.get('odds_1x', 1.35),
-                "x2": ev.get('odds_x2', 1.50),
-                "over15": ev.get('over_15', 1.35),
+                "1x": ev.get('odds_1x', 1.55),
+                "x2": ev.get('odds_x2', 1.60),
+                "over15": ev.get('over_15', 1.50),
                 "under15": ev.get('under_15', 3.0),
                 "over25": ev.get('over_25', 1.9),
                 "under25": ev.get('under_25', 1.8),
@@ -317,8 +318,8 @@ try:
     cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#2D3748'))
     header_cell_style = ParagraphStyle('HeaderCellStyle', parent=styles['Normal'], fontSize=8, textColor=colors.white, fontName='Helvetica-Bold')
 
-    elements.append(Paragraph(f"<b>REPORT QUANTITATIVO DEFINITIVO</b>", title_style))
-    elements.append(Paragraph(f"Data: {oggi} | API Integrate (Football-Data + Odss API + Fuzzy Matching)", subtitle_style))
+    elements.append(Paragraph(f"<b>REPORT QUANTITATIVO - ALTA QUALITÀ</b>", title_style))
+    elements.append(Paragraph(f"Data: {oggi} | Quota Min: 1.50 | Edge Min: 3% | Kelly: 30%", subtitle_style))
     elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#2B6CB0'), spaceAfter=12))
 
     table_data = [[
@@ -338,8 +339,8 @@ try:
         else:
             match_str = f"{m['casa']} vs {m['ospite']}"
             p_str = f"{bb['model_prob']}%"
-            q_str = str(bb['odds'])
-            edge_str = f"+{bb['edge']}%" if bb['edge'] > 0 else f"{bb['edge']}%"
+            q_str = str(bb['odds']) if bb['odds'] > 0 else "-"
+            edge_str = f"+{bb['edge']}%" if bb['edge'] > 0 else "-"
             val_str = "🟢 SI" if bb['is_value'] else "🔴 NO"
             pron_str = f"<b>{bb['bet_type']}</b>"
 
@@ -365,14 +366,14 @@ try:
 
     elements.append(t)
     doc.build(elements)
-    print(f"✅ PDF definitivo generato: {pdf_filename}")
+    print(f"✅ PDF di alta qualità generato: {pdf_filename}")
 
     # ==========================================
     # 📤 6. INVIO TELEGRAM CON BILANCIO STORICO
     # ==========================================
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     
-    caption_text = f"🧠 *Report Quantitativo Definitivo del {oggi}* 🚀\n\n"
+    caption_text = f"🧠 *Report Quantitativo Alta Qualità ({oggi})* 🚀\n\n"
     if report_ieri_lines:
         caption_text += f"📊 *Bilancio Pronostici di Ieri ({ieri}):*\n" + "\n".join(report_ieri_lines[:8])
     else:
@@ -387,7 +388,7 @@ try:
         res_tg = requests.post(telegram_url, data=payload, files=files)
         
     if res_tg.status_code == 200:
-        print("✅ Report e bilancio storico inviati con successo su Telegram!")
+        print("✅ Report ad alta qualità e bilancio inviati con successo su Telegram!")
     else:
         print(f"⚠️ Errore Telegram: {res_tg.text}")
 
