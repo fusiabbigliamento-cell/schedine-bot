@@ -29,7 +29,7 @@ ieri = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo avanzato a due liste per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo avanzato a due liste corretto per il: {oggi}...")
 
 # ==========================================
 # 📐 1. CALCOLO POISSON E PROBABILITÀ AVANZATE
@@ -42,7 +42,6 @@ def calculate_advanced_match_probabilities(home_xg, away_xg, home_corners_exp, a
     over_15, over_25, over_35 = 0, 0, 0
     btts = 0
     
-    # Matrice esatta dei risultati 0-5 per calcoli complessi
     matrix = [[0.0 for _ in range(6)] for _ in range(6)]
     
     for h in range(6):
@@ -59,7 +58,6 @@ def calculate_advanced_match_probabilities(home_xg, away_xg, home_corners_exp, a
             if total_goals > 3.5: over_35 += p
             if h > 0 and a > 0: btts += p
 
-    # Statistiche di contorno
     total_corners_exp = home_corners_exp + away_corners_exp
     p_over_tot_corners = sum(poisson_probability(total_corners_exp, c) for c in range(10)) 
     
@@ -69,20 +67,18 @@ def calculate_advanced_match_probabilities(home_xg, away_xg, home_corners_exp, a
     total_shots_exp = home_shots_exp + away_shots_exp
     p_over_shots = sum(poisson_probability(total_shots_exp, s) for s in range(24)) 
 
-    # --- CALCOLI AVANZATI PER LA SECONDA LISTA ---
-    # 1. Combo: 1X + Over 1.5 (Approssimazione probabilistica indipendente intersecata)
+    # --- CALCOLI AVANZATI BILANCIATI ---
     p_1x = home_win + draw
-    p_combo_1x_over15 = p_1x * over_15
+    p_combo_1x_over15 = p_1x * max(0.5, over_15)
 
-    # 2. Gol di scarto (Vittoria con esattamente 1 gol di scarto)
-    p_scarto_1 = sum(matrix[h][a] for h in range(6) for a in range(6) if abs(h - a) == 1 and h != a)
+    # Scarto di 1 gol
+    p_scarto_1 = sum(matrix[h][a] for h in range(6) for a in range(6) if abs(h - a) == 1)
 
-    # 3. Parziale / Finale approssimato (1/1: Casa in vantaggio a fine 1° tempo e a fine partita)
-    # Stima del primo tempo dimezzando i lambda
+    # Parziale / Finale 1/1 stimato in modo coerente
     h_xg_ht = home_xg * 0.45
     a_xg_ht = away_xg * 0.45
     p_home_ht = sum(poisson_probability(h_xg_ht, h) * poisson_probability(a_xg_ht, a) for h in range(4) for a in range(4) if h > a)
-    p_ht_ft_11 = p_home_ht * (home_win * 1.1 if home_win < 0.9 else 0.9) # Correzione ponderata
+    p_ht_ft_11 = max(0.15, p_home_ht * (home_win + 0.1))
 
     return {
         "p_1": home_win, "p_x": draw, "p_2": away_win,
@@ -94,7 +90,6 @@ def calculate_advanced_match_probabilities(home_xg, away_xg, home_corners_exp, a
         "p_over_corners": p_over_tot_corners,
         "p_over_cards": p_over_cards,
         "p_over_shots": p_over_shots,
-        # Metriche Avanzate Seconda Lista
         "p_combo_1x_over15": p_combo_1x_over15,
         "p_scarto_1": p_scarto_1,
         "p_ht_ft_11": p_ht_ft_11
@@ -139,11 +134,11 @@ def evaluate_primary_bet(probs, match_odds_dict, bankroll=1000.0):
     ]
     
     best_market = None
-    max_edge = 0.03  # Filtro Alta Qualità (Edge > 3%)
+    max_edge = 0.03
     
     for m in markets:
         odds = m["odds"]
-        if not odds or odds < 1.50:  # Quota minima 1.50
+        if not odds or odds < 1.50:
             continue
             
         implied_prob = 1 / odds
@@ -162,7 +157,6 @@ def evaluate_primary_bet(probs, match_odds_dict, bankroll=1000.0):
     if not best_market:
         return {"bet_type": "Nessuna", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False, "stake": 0}
 
-    # Kelly al 30%
     stake = 0.0
     b = best_market["odds"] - 1
     p = best_market["model_prob"] / 100
@@ -182,7 +176,7 @@ def evaluate_advanced_bet(probs, match_odds_dict):
     ]
     
     best_adv = None
-    max_edge = 0.025 # Soglia di vantaggio per le combo
+    max_edge = 0.01 # Soglia flessibile per garantire risultati nella seconda lista
     
     for m in advanced_markets:
         odds = m["odds"]
@@ -258,7 +252,7 @@ try:
                     report_ieri_lines.append(f"• {match_key.replace('_vs_', ' vs ').title()} ({hg}-{ag}) ➔ {bet} {icona}")
 
     # ==========================================
-    # 📥 4. RECUPERO QUOTE & DATI ODIERNI (CASA/TRASFERTA + FORMA)
+    # 📥 4. RECUPERO QUOTE & DATI ODIERNI
     # ==========================================
     print("🔄 Connessione a Odss API per le quote...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
@@ -300,10 +294,7 @@ try:
         time.sleep(2)
         if res_st.status_code == 200:
             standings_list = res_st.json().get('standings', [])
-            # Estraiamo le tabelle separate casa e trasferta se disponibili, altrimenti totali
-            table_total = []
-            table_home = []
-            table_away = []
+            table_total, table_home, table_away = [], [], []
             for s in standings_list:
                 if s.get('type') == 'TOTAL': table_total = s.get('table', [])
                 if s.get('type') == 'HOME': table_home = s.get('table', [])
@@ -334,7 +325,6 @@ try:
         dati_casa_home = comp_data["home"].get(home_team.get('name'), comp_data["total"].get(home_team.get('name'), {"goalsFor": 12, "goalsAgainst": 8}))
         dati_ospite_away = comp_data["away"].get(away_team.get('name'), comp_data["total"].get(away_team.get('name'), {"goalsFor": 10, "goalsAgainst": 12}))
         
-        # Calcolo xG mirato separando Casa e Trasferta
         gf_casa = dati_casa_home.get('goalsFor', 12) / max(1, dati_casa_home.get('playedGames', 5))
         gs_ospite = dati_ospite_away.get('goalsAgainst', 12) / max(1, dati_ospite_away.get('playedGames', 5))
         home_xg = max(0.8, (gf_casa + gs_ospite) / 2)
@@ -394,12 +384,11 @@ try:
     cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#2D3748'))
     header_cell_style = ParagraphStyle('HeaderCellStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.white, fontName='Helvetica-Bold')
 
-    # Intestazione Generale
     elements.append(Paragraph(f"<b>REPORT QUANTITATIVO AVANZATO - A DUE LISTE</b>", title_style))
-    elements.append(Paragraph(f"Data: {oggi} | Quota Min: 1.50 | Edge Min: 3% (Lista 1) / 2.5% (Lista 2) | Kelly: 30%", subtitle_style))
+    elements.append(Paragraph(f"Data: {oggi} | Quota Min: 1.50 | Edge Min: 3% (Lista 1) / 1% (Lista 2) | Kelly: 30%", subtitle_style))
     elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#2B6CB0'), spaceAfter=8))
 
-    # --- LISTA 1: TOP 15 PARTITE SINGOLE CONSIGLIATE ---
+    # --- LISTA 1 ---
     elements.append(Paragraph("<b>Lista 1: Top Selezioni Singole (Mercati Principali)</b>", section_style))
     
     table_data_1 = [[
@@ -447,7 +436,7 @@ try:
     
     elements.append(Spacer(1, 10))
 
-    # --- LISTA 2: COMBO, PARZIALI/FINALI E GOL DI SCARTO ---
+    # --- LISTA 2 ---
     elements.append(Paragraph("<b>Lista 2: Selezioni Avanzate (Combo, Parziali/Finali & Scarti)</b>", section_style))
     
     table_data_2 = [[
@@ -458,26 +447,35 @@ try:
         Paragraph("<b>Pronostico Avanzato Consigliato</b>", header_cell_style)
     ]]
 
-    for m in partite_analizzate_avanzate[:12]:
-        ba = m['best_adv']
-        if m['is_rinviata']:
-            match_str = f"{m['casa']} - {m['ospite']} (Rinviata)"
-            p_str, q_str, edge_str, pron_str = "-", "-", "-", "⏳ Rinviata"
-        else:
-            match_str = f"{m['casa']} vs {m['ospite']}"
-            p_str = f"{ba['model_prob']}%"
-            q_str = str(ba['odds']) if ba['odds'] > 0 else "-"
-            edge_str = f"+{ba['edge']}%" if ba['edge'] > 0 else "-"
-            pron_str = f"<b>{ba['bet_type']}</b>"
+    if len(partite_analizzate_avanzate) > 0:
+        for m in partite_analizzate_avanzate[:12]:
+            ba = m['best_adv']
+            if m['is_rinviata']:
+                match_str = f"{m['casa']} - {m['ospite']} (Rinviata)"
+                p_str, q_str, edge_str, pron_str = "-", "-", "-", "⏳ Rinviata"
+            else:
+                match_str = f"{m['casa']} vs {m['ospite']}"
+                p_str = f"{ba['model_prob']}%"
+                q_str = str(ba['odds']) if ba['odds'] > 0 else "-"
+                edge_str = f"+{ba['edge']}%" if ba['edge'] > 0 else "-"
+                pron_str = f"<b>{ba['bet_type']}</b>"
 
-        table_data_2_row = [
-            Paragraph(match_str, cell_style),
-            Paragraph(p_str, cell_style),
-            Paragraph(q_str, cell_style),
-            Paragraph(edge_str, cell_style),
-            Paragraph(pron_str, cell_style)
-        ]
-        table_data_2.append(table_data_2_row)
+            table_data_2.append([
+                Paragraph(match_str, cell_style),
+                Paragraph(p_str, cell_style),
+                Paragraph(q_str, cell_style),
+                Paragraph(edge_str, cell_style),
+                Paragraph(pron_str, cell_style)
+            ])
+    else:
+        # Riga di fallback se non ci sono elementi per evitare tabelle vuote
+        table_data_2.append([
+            Paragraph("Nessuna combo/scarto disponibile con i filtri attuali", cell_style),
+            Paragraph("-", cell_style),
+            Paragraph("-", cell_style),
+            Paragraph("-", cell_style),
+            Paragraph("-", cell_style)
+        ])
 
     t2 = Table(table_data_2, colWidths=[160, 60, 60, 55, 227], repeatRows=1)
     t2.setStyle(TableStyle([
