@@ -259,7 +259,7 @@ try:
         time.sleep(2)
         if res_st.status_code == 200:
             standings_list = res_st.json().get('standings', [])
-            table = [s.get('table', []) for s in standings_list if s.get('type'] == 'TOTAL'] if 'standings' in res_st.json() else []
+            table = [s.get('table', []) for s in standings_list if s.get('type') == 'TOTAL'] if 'standings' in res_st.json() else []
             table = table[0] if table else []
             classifiche_cache[comp_id] = {item['team']['name']: item for item in table if 'team' in item}
         else:
