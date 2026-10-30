@@ -16,7 +16,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 # ==========================================
 API_TOKEN = os.environ.get('API_TOKEN', 'e2c702f19ed64c2088f7ab6c22493911')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8524849158:AAG2vVKUWqC4J_T1jDPA7IQxLY1uFy0jW9o')
-CHAT_ID = os.environ.get('CHAT_ID', '591667981')
+CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', os.environ.get('CHAT_ID', '591667981'))
 
 ODSS_KEY = os.environ.get('ODSS_KEY', 'odss_live_9eV8NU_44bNqBQ53VDoEG6ERwYmnhZtz')
 ODSS_URL = "https://odss-api.com/api/v1/odds?sport=calcio"
@@ -28,21 +28,29 @@ headers_odss = {'x-api-key': ODSS_KEY}
 # 🕒 GESTIONE FINESTRA CALCISTICA (08:00 - 07:59)
 # ==========================================
 now_local = datetime.now()
+
 if now_local.hour < 8:
-    start_date = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
-    end_date = now_local.strftime('%Y-%m-%d')
-    ieri = (now_local - timedelta(days=2)).strftime('%Y-%m-%d')
-    oggi = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
+    start_dt = now_local - timedelta(days=1)
+    end_dt = now_local
+    ieri_dt = now_local - timedelta(days=2)
 else:
-    start_date = now_local.strftime('%Y-%m-%d')
-    end_date = (now_local + timedelta(days=1)).strftime('%Y-%m-%d')
-    ieri = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
-    oggi = now_local.strftime('%Y-%m-%d')
+    start_dt = now_local
+    end_dt = now_local + timedelta(days=1)
+    ieri_dt = now_local - timedelta(days=1)
+
+start_date = start_dt.strftime('%Y-%m-%d')
+end_date = end_dt.strftime('%Y-%m-%d')
+ieri = ieri_dt.strftime('%Y-%m-%d')
+oggi = start_date
+
+# Finestra oraria rigorosa: dalle 08:00 di oggi alle 07:59 del giorno dopo
+soglia_inizio = datetime.strptime(f"{start_date} 08:00:00", '%Y-%m-%d %H:%M:%S')
+soglia_fine = soglia_inizio + timedelta(hours=24)
 
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo ad alta qualità per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo ad alta qualità per la finestra: {soglia_inizio} -> {soglia_fine}...")
 
 def poisson_probability(lmbda, k):
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
@@ -209,7 +217,7 @@ try:
                     report_ieri_lines.append(f"• {partite_nomi} ({hg}-{ag}) ➔ {bet} {icona}")
 
     # ==========================================
-    # 📥 4. DOWNLOAD QUOTE & PARTITE
+    # 📥 4. DOWNLOAD QUOTE & PARTITE (FILTRATE)
     # ==========================================
     print("🔄 Connessione a Odss API...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
@@ -245,10 +253,16 @@ try:
     
     all_fetched_matches = res_fd.json().get('matches', []) if res_fd.status_code == 200 else []
     raw_matches = []
+
     for m in all_fetched_matches:
         utc_date_str = m.get('utcDate')
-        if utc_date_str and start_date <= utc_date_str[:10] <= end_date:
-            raw_matches.append(m)
+        if utc_date_str:
+            dt_utc = datetime.strptime(utc_date_str[:19], '%Y-%m-%dT%H:%M:%S')
+            dt_italy = dt_utc + timedelta(hours=1)
+            
+            # Filtro rigoroso: solo partite comprese esattamente tra le 08:00 di oggi e le 07:59 di domani
+            if soglia_inizio <= dt_italy < soglia_fine:
+                raw_matches.append(m)
 
     comp_ids = set(m.get('competition', {}).get('id') for m in raw_matches if m.get('competition', {}).get('id'))
     classifiche_cache = {}
