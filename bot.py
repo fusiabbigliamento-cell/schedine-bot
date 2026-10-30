@@ -396,4 +396,7 @@ try:
         }
         requests.post(telegram_url, data=payload, files=files)
 
+except Exception as e:
+    print(f"❌ Errore generale nell'esecuzione: {e}")
+
 print("✅ Esecuzione completata con successo.")
