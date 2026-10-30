@@ -377,7 +377,7 @@ try:
     doc.build(elements)
 
     # ==========================================
-    # 📤 6. INVIO TELEGRAM CON CONTROLLO RISPOSTA
+    # 📤 6. INVIO TELEGRAM
     # ==========================================
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     
@@ -392,7 +392,6 @@ try:
         payload = {
             "chat_id": CHAT_ID,
             "caption": caption_text
-            # Nota: Abbiamo rimosso temporaneamente parse_mode per evitare blocchi di formattazione Markdown da parte di Telegram
         }
         res_tg = requests.post(telegram_url, data=payload, files=files)
         
@@ -400,3 +399,8 @@ try:
             print("✅ Documento e bilancio inviati con successo su Telegram!")
         else:
             print(f"❌ Errore invio Telegram (Codice {res_tg.status_code}): {res_tg.text}")
+
+except Exception as e:
+    print(f"❌ Errore generale nell'esecuzione: {e}")
+
+print("✅ Esecuzione completata con successo.")
