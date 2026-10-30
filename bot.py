@@ -29,11 +29,10 @@ headers_odss = {'x-api-key': ODSS_KEY}
 # ==========================================
 now_local = datetime.now()
 if now_local.hour < 8:
-    # Se sono le prime ore del mattino (es. dopo la mezzanotte), la "giornata calcistica" fa capo a ieri mattina
     start_date = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
     end_date = now_local.strftime('%Y-%m-%d')
     ieri = (now_local - timedelta(days=2)).strftime('%Y-%m-%d')
-    oggi = (now_local - timedelta(days=1)).strftime('%Y-%m-%d') # Riferimento logico report
+    oggi = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
 else:
     start_date = now_local.strftime('%Y-%m-%d')
     end_date = (now_local + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -43,11 +42,8 @@ else:
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo ad alta qualità (Finestra calcistica attiva) per il: {oggi}...")
+print(f"🔄 Avvio motore quantitativo ad alta qualità per il: {oggi}...")
 
-# ==========================================
-# 📐 1. FUNZIONE DI CALCOLO POISSON ESTESA
-# ==========================================
 def poisson_probability(lmbda, k):
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
 
@@ -90,9 +86,6 @@ def calculate_match_probabilities(home_xg, away_xg, home_corners_exp, away_corne
         "p_over_shots": p_over_shots
     }
 
-# ==========================================
-# 📈 2. FUNZIONE DI SCELTA MERCATO & TUNING ALTA QUALITÀ
-# ==========================================
 def find_odds_for_match(casa, ospite, odds_cache):
     match_key = f"{casa.lower()}_vs_{ospite.lower()}"
     if match_key in odds_cache:
@@ -128,11 +121,10 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
     ]
     
     best_market = None
-    max_edge = 0.03  # Richiediamo almeno il 3% di Edge (Alta Qualità)
+    max_edge = 0.03
     
     for m in markets:
         odds = m["odds"]
-        # Quota minima alzata a 1.50
         if not odds or odds < 1.50: 
             continue
             
@@ -150,9 +142,8 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
             }
             
     if not best_market:
-        return {"bet_type": "Nessuna (Filtro Alta Qualità)", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False, "stake": 0}
+        return {"bet_type": "Nessuna", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False, "stake": 0}
 
-    # Criterio di Kelly impostato al 30% (0.30)
     stake = 0.0
     b = best_market["odds"] - 1
     p = best_market["model_prob"] / 100
@@ -166,9 +157,9 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
 
 try:
     # ==========================================
-    # 📊 3. VERIFICA ESITI DI IERI (DA FILE STORICO)
+    # 📊 3. VERIFICA ESITI DI IERI CON ✅ / ❌
     # ==========================================
-    print(f"🔄 Verifica esiti delle partite di ieri ({ieri}) tramite lo storico salvato...")
+    print(f"🔄 Verifica esiti delle partite di ieri ({ieri})...")
     report_ieri_lines = []
     
     if os.path.exists(STORICO_FILE):
@@ -218,9 +209,9 @@ try:
                     report_ieri_lines.append(f"• {partite_nomi} ({hg}-{ag}) ➔ {bet} {icona}")
 
     # ==========================================
-    # 📥 4. RECUPERO QUOTE & PARTITE ODIERNE (FINESTRA 08:00 - 07:59)
+    # 📥 4. DOWNLOAD QUOTE & PARTITE
     # ==========================================
-    print("🔄 Connessione a Odss API per scaricare le quote...")
+    print("🔄 Connessione a Odss API...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
     odds_cache = {}
     if res_odss.status_code == 200:
@@ -248,28 +239,16 @@ try:
                 "shots": ev.get('over_shots', 1.85)
             }
 
-    # Intervallo temporale pulito per catturare l'intera giornata calcistica
     url_matches = f"https://api.football-data.org/v4/matches?dateFrom={start_date}&dateTo={end_date}"
     res_fd = requests.get(url_matches, headers=headers_fd)
     time.sleep(2)
     
     all_fetched_matches = res_fd.json().get('matches', []) if res_fd.status_code == 200 else []
-    
-    # Filtriamo rigorosamente i match che rientrano nella finestra attiva dalle 08:00 in poi del giorno di riferimento
     raw_matches = []
-    threshold_start = datetime.strptime(f"{oggi} 08:00:00", "%Y-%m-%d %H:%M:%S")
-    threshold_end = threshold_start + timedelta(hours=24)
-
     for m in all_fetched_matches:
         utc_date_str = m.get('utcDate')
-        if utc_date_str:
-            # L'API restituisce stringhe tipo '2026-10-30T19:00:00Z'
-            match_dt = datetime.strptime(utc_date_str.replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
-            # Convertiamo grossolanamente in orario locale o filtriamo per giorno effettivo di competenza
-            if start_date <= utc_date_str[:10] <= end_date:
-                raw_matches.append(m)
-
-    print(f"✅ Trovate {len(raw_matches)} partite valide nella finestra calcistica.")
+        if utc_date_str and start_date <= utc_date_str[:10] <= end_date:
+            raw_matches.append(m)
 
     comp_ids = set(m.get('competition', {}).get('id') for m in raw_matches if m.get('competition', {}).get('id'))
     classifiche_cache = {}
@@ -280,7 +259,7 @@ try:
         time.sleep(2)
         if res_st.status_code == 200:
             standings_list = res_st.json().get('standings', [])
-            table = [s.get('table', []) for s in standings_list if s.get('type') == 'TOTAL'] if 'standings' in res_st.json() else []
+            table = [s.get('table', []) for s in standings_list if s.get('type'] == 'TOTAL'] if 'standings' in res_st.json() else []
             table = table[0] if table else []
             classifiche_cache[comp_id] = {item['team']['name']: item for item in table if 'team' in item}
         else:
@@ -396,31 +375,25 @@ try:
 
     elements.append(t)
     doc.build(elements)
-    print(f"✅ PDF di alta qualità generato: {pdf_filename}")
 
     # ==========================================
-    # 📤 6. INVIO TELEGRAM CON BILANCIO STORICO
+    # 📤 6. INVIO TELEGRAM CON BILANCIO DETTAGLIATO
     # ==========================================
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     
     caption_text = f"🧠 *Report Quantitativo Alta Qualità ({oggi})* 🚀\n\n"
     if report_ieri_lines:
-        caption_text += f"📊 *Bilancio Pronostici di Ieri ({ieri}):*\n" + "\n".join(report_ieri_lines[:8])
+        caption_text += f"📊 *Bilancio Pronostici di Ieri ({ieri}):*\n" + "\n".join(report_ieri_lines)
     else:
-        caption_text += f"📊 *Bilancio Ieri ({ieri}):* Nessun pronostico registrato nello storico o partite non ancora concluse."
+        caption_text += f"📊 *Bilancio Ieri ({ieri}):* Nessun pronostico nello storico o partite non ancora concluse."
 
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
         payload = {
             "chat_id": CHAT_ID,
-            "caption": caption_text
+            "caption": caption_text,
+            "parse_mode": "Markdown"
         }
-        res_tg = requests.post(telegram_url, data=payload, files=files)
-        
-    if res_tg.status_code == 200:
-        print("✅ Report ad alta qualità e bilancio inviati con successo su Telegram!")
-    else:
-        print(f"⚠️ Errore Telegram: {res_tg.text}")
+        requests.post(telegram_url, data=payload, files=files)
 
-except Exception as e:
-    print(f"❌ Errore generale nell'esecuzione: {e}")
+print("✅ Esecuzione completata con successo.")
