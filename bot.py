@@ -377,26 +377,26 @@ try:
     doc.build(elements)
 
     # ==========================================
-    # 📤 6. INVIO TELEGRAM CON BILANCIO DETTAGLIATO
+    # 📤 6. INVIO TELEGRAM CON CONTROLLO RISPOSTA
     # ==========================================
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     
-    caption_text = f"🧠 *Report Quantitativo Alta Qualità ({oggi})* 🚀\n\n"
+    caption_text = f"🧠 Report Quantitativo Alta Qualità ({oggi})\n\n"
     if report_ieri_lines:
-        caption_text += f"📊 *Bilancio Pronostici di Ieri ({ieri}):*\n" + "\n".join(report_ieri_lines)
+        caption_text += f"📊 Bilancio Pronostici di Ieri ({ieri}):\n" + "\n".join(report_ieri_lines)
     else:
-        caption_text += f"📊 *Bilancio Ieri ({ieri}):* Nessun pronostico nello storico o partite non ancora concluse."
+        caption_text += f"📊 Bilancio Ieri ({ieri}): Nessun pronostico nello storico o partite non ancora concluse."
 
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
         payload = {
             "chat_id": CHAT_ID,
-            "caption": caption_text,
-            "parse_mode": "Markdown"
+            "caption": caption_text
+            # Nota: Abbiamo rimosso temporaneamente parse_mode per evitare blocchi di formattazione Markdown da parte di Telegram
         }
-        requests.post(telegram_url, data=payload, files=files)
-
-except Exception as e:
-    print(f"❌ Errore generale nell'esecuzione: {e}")
-
-print("✅ Esecuzione completata con successo.")
+        res_tg = requests.post(telegram_url, data=payload, files=files)
+        
+        if res_tg.status_code == 200:
+            print("✅ Documento e bilancio inviati con successo su Telegram!")
+        else:
+            print(f"❌ Errore invio Telegram (Codice {res_tg.status_code}): {res_tg.text}")
