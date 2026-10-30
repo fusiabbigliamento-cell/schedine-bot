@@ -4,7 +4,39 @@ import json
 import math
 import requests
 from datetime import datetime, timedelta
-from difflib import get_close_matches
+from difflib import get_close_matchesname: Genera Schedine Giornaliere
+
+on:
+  schedule:
+    - cron: '10 8 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests reportlab
+
+    - name: Run bot script
+      env:
+        API_TOKEN: ${{ secrets.API_TOKEN }}
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        ODSS_KEY: ${{ secrets.ODSS_KEY }}
+      run: |
+        python bot.py
 
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
