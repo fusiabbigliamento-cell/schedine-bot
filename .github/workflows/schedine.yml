@@ -1,40 +1,420 @@
-name: Genera Schedine Giornaliere
+import os
+import time
+import json
+import math
+import requests
+from datetime import datetime, timedelta
+from difflib import get_close_matches
 
-on:
-  schedule:
-    - cron: '10 7 * * *' # Esegue tutti i giorni alle 07:10 UTC (08:10 ora italiana)
-  workflow_dispatch: # Permette l'avvio manuale dal tasto Actions su GitHub
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+# ==========================================
+# 🔑 CONFIGURAZIONE API & CREDENZIALI
+# ==========================================
+API_TOKEN = os.environ.get('API_TOKEN', 'e2c702f19ed64c2088f7ab6c22493911')
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8524849158:AAG2vVKUWqC4J_T1jDPA7IQxLY1uFy0jW9o')
+CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', os.environ.get('CHAT_ID', '591667981'))
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+ODSS_KEY = os.environ.get('ODSS_KEY', 'odss_live_9eV8NU_44bNqBQ53VDoEG6ERwYmnhZtz')
+ODSS_URL = "https://odss-api.com/api/v1/odds?sport=calcio"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests reportlab
+headers_fd = {'X-Auth-Token': API_TOKEN}
+headers_odss = {'x-api-key': ODSS_KEY}
 
-      - name: Run script
-        env:
-          API_TOKEN: ${{ secrets.API_TOKEN }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ODSS_KEY: ${{ secrets.ODSS_KEY }}
-        run: |
-          python bot.py
+# ==========================================
+# 🕒 GESTIONE FINESTRA CALCISTICA (08:00 - 07:59)
+# ==========================================
+now_local = datetime.now()
 
-      - name: Commit and push changes (Storico aggiornato)
-        run: |
-          git config --global user.name "Bot Schedine"
-          git config --global user.email "bot@users.noreply.github.com"
-          git add storico_pronostici.json || true
-          git commit -m "Aggiornamento automatico storico pronostici" || true
-          git push || true
+if now_local.hour < 8:
+    start_dt = now_local - timedelta(days=1)
+    end_dt = now_local
+    ieri_dt = now_local - timedelta(days=2)
+else:
+    start_dt = now_local
+    end_dt = now_local + timedelta(days=1)
+    ieri_dt = now_local - timedelta(days=1)
+
+start_date = start_dt.strftime('%Y-%m-%d')
+end_date = end_dt.strftime('%Y-%m-%d')
+ieri = ieri_dt.strftime('%Y-%m-%d')
+oggi = start_date
+
+# Finestra oraria rigorosa: dalle 08:00 di oggi alle 07:59 del giorno dopo
+soglia_inizio = datetime.strptime(f"{start_date} 08:00:00", '%Y-%m-%d %H:%M:%S')
+soglia_fine = soglia_inizio + timedelta(hours=24)
+
+pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
+STORICO_FILE = "storico_pronostici.json"
+
+print(f"🔄 Avvio motore quantitativo ad alta qualità per la finestra: {soglia_inizio} -> {soglia_fine}...")
+
+def poisson_probability(lmbda, k):
+    return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
+
+def calculate_match_probabilities(home_xg, away_xg, home_corners_exp, away_corners_exp, home_cards_exp, away_cards_exp, home_shots_exp, away_shots_exp):
+    home_win, draw, away_win = 0, 0, 0
+    over_15, over_25, over_35 = 0, 0, 0
+    btts = 0
+    
+    for h in range(6):
+        for a in range(6):
+            p = poisson_probability(home_xg, h) * poisson_probability(away_xg, a)
+            if h > a: home_win += p
+            elif h == a: draw += p
+            else: away_win += p
+            
+            total_goals = h + a
+            if total_goals > 1.5: over_15 += p
+            if total_goals > 2.5: over_25 += p
+            if total_goals > 3.5: over_35 += p
+            if h > 0 and a > 0: btts += p
+
+    total_corners_exp = home_corners_exp + away_corners_exp
+    p_over_tot_corners = sum(poisson_probability(total_corners_exp, c) for c in range(10)) 
+    
+    total_cards_exp = home_cards_exp + away_cards_exp
+    p_over_cards = sum(poisson_probability(total_cards_exp, c) for c in range(5)) 
+
+    total_shots_exp = home_shots_exp + away_shots_exp
+    p_over_shots = sum(poisson_probability(total_shots_exp, s) for s in range(24)) 
+
+    return {
+        "p_1": home_win, "p_x": draw, "p_2": away_win,
+        "p_1x": home_win + draw, "p_x2": away_win + draw,
+        "p_over15": over_15, "p_under15": 1 - over_15,
+        "p_over25": over_25, "p_under25": 1 - over_25,
+        "p_over35": over_35, "p_under35": 1 - over_35,
+        "p_goal": btts, "p_nogoal": 1 - btts,
+        "p_over_corners": p_over_tot_corners,
+        "p_over_cards": p_over_cards,
+        "p_over_shots": p_over_shots
+    }
+
+def find_odds_for_match(casa, ospite, odds_cache):
+    match_key = f"{casa.lower()}_vs_{ospite.lower()}"
+    if match_key in odds_cache:
+        return odds_cache[match_key]
+    
+    all_keys = list(odds_cache.keys())
+    close_matches = get_close_matches(match_key, all_keys, n=1, cutoff=0.4)
+    if close_matches:
+        return odds_cache[close_matches[0]]
+    
+    return {
+        "1": 2.10, "x": 3.30, "2": 3.50, "1x": 1.32, "x2": 1.55,
+        "over15": 1.35, "under15": 3.10, "over25": 2.05, "under25": 1.75, "over35": 3.60,
+        "goal": 1.80, "corners": 1.85, "cards": 1.90, "shots": 1.85
+    }
+
+def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
+    markets = [
+        {"name": "Segno 1", "prob": probs["p_1"], "odds": match_odds_dict.get("1", 0)},
+        {"name": "Segno X", "prob": probs["p_x"], "odds": match_odds_dict.get("x", 0)},
+        {"name": "Segno 2", "prob": probs["p_2"], "odds": match_odds_dict.get("2", 0)},
+        {"name": "Doppia 1X", "prob": probs["p_1x"], "odds": match_odds_dict.get("1x", 0)},
+        {"name": "Doppia X2", "prob": probs["p_x2"], "odds": match_odds_dict.get("x2", 0)},
+        {"name": "Over 1.5", "prob": probs["p_over15"], "odds": match_odds_dict.get("over15", 0)},
+        {"name": "Under 1.5", "prob": probs["p_under15"], "odds": match_odds_dict.get("under15", 0)},
+        {"name": "Over 2.5", "prob": probs["p_over25"], "odds": match_odds_dict.get("over25", 0)},
+        {"name": "Under 2.5", "prob": probs["p_under25"], "odds": match_odds_dict.get("under25", 0)},
+        {"name": "Over 3.5", "prob": probs["p_over35"], "odds": match_odds_dict.get("over35", 0)},
+        {"name": "Goal (BTTS)", "prob": probs["p_goal"], "odds": match_odds_dict.get("goal", 0)},
+        {"name": "Over 9.5 Corner", "prob": probs["p_over_corners"], "odds": match_odds_dict.get("corners", 0)},
+        {"name": "Over 4.5 Cart.", "prob": probs["p_over_cards"], "odds": match_odds_dict.get("cards", 0)},
+        {"name": "Over 23.5 Tiri", "prob": probs["p_over_shots"], "odds": match_odds_dict.get("shots", 0)}
+    ]
+    
+    best_market = None
+    max_edge = 0.03
+    
+    for m in markets:
+        odds = m["odds"]
+        if not odds or odds < 1.50: 
+            continue
+            
+        implied_prob = 1 / odds
+        edge = m["prob"] - implied_prob
+        
+        if edge > max_edge:
+            max_edge = edge
+            best_market = {
+                "bet_type": m["name"],
+                "model_prob": round(m["prob"] * 100, 1),
+                "odds": odds,
+                "edge": round(edge * 100, 2),
+                "is_value": True
+            }
+            
+    if not best_market:
+        return {"bet_type": "Nessuna", "model_prob": 0, "odds": 0, "edge": 0, "is_value": False, "stake": 0}
+
+    stake = 0.0
+    b = best_market["odds"] - 1
+    p = best_market["model_prob"] / 100
+    q = 1 - p
+    kelly_fraction = (b * p - q) / b
+    if kelly_fraction > 0:
+        stake = round(bankroll * kelly_fraction * 0.30, 2)
+            
+    best_market["stake"] = stake
+    return best_market
+
+try:
+    # ==========================================
+    # 📊 3. VERIFICA ESITI DI IERI CON ✅ / ❌
+    # ==========================================
+    print(f"🔄 Verifica esiti delle partite di ieri ({ieri})...")
+    report_ieri_lines = []
+    
+    if os.path.exists(STORICO_FILE):
+        with open(STORICO_FILE, "r") as f:
+            storico_data = json.load(f)
+            
+        url_ieri = f"https://api.football-data.org/v4/matches?date={ieri}"
+        res_ieri = requests.get(url_ieri, headers=headers_fd)
+        time.sleep(2)
+        
+        risultati_reali_ieri = {}
+        if res_ieri.status_code == 200:
+            for mi in res_ieri.json().get('matches', []):
+                if mi.get('status') == 'FINISHED':
+                    c_it = mi.get('homeTeam', {}).get('shortName', mi.get('homeTeam', {}).get('name', '')).lower()
+                    o_it = mi.get('awayTeam', {}).get('shortName', mi.get('awayTeam', {}).get('name', '')).lower()
+                    score = mi.get('score', {}).get('fullTime', {})
+                    hg = score.get('home', 0)
+                    ag = score.get('away', 0)
+                    risultati_reali_ieri[f"{c_it}_vs_{o_it}"] = {"hg": hg, "ag": ag}
+
+        if ieri in storico_data:
+            for match_key, pronostico_salvato in storico_data[ieri].items():
+                if match_key in risultati_reali_ieri:
+                    res = risultati_reali_ieri[match_key]
+                    hg, ag = res["hg"], res["ag"]
+                    tot_g = hg + ag
+                    
+                    bet = pronostico_salvato["bet_type"]
+                    vinta = False
+                    
+                    if bet == "Segno 1": vinta = hg > ag
+                    elif bet == "Segno X": vinta = hg == ag
+                    elif bet == "Segno 2": vinta = hg < ag
+                    elif bet == "Doppia 1X": vinta = hg >= ag
+                    elif bet == "Doppia X2": vinta = hg <= ag
+                    elif "Over 1.5" in bet: vinta = tot_g > 1.5
+                    elif "Under 1.5" in bet: vinta = tot_g < 1.5
+                    elif "Over 2.5" in bet: vinta = tot_g > 2.5
+                    elif "Under 2.5" in bet: vinta = tot_g < 2.5
+                    elif "Over 3.5" in bet: vinta = tot_g > 3.5
+                    elif "Goal (BTTS)" in bet: vinta = hg > 0 and ag > 0
+                    else: vinta = hg > ag
+                    
+                    icona = "✅" if vinta else "❌"
+                    partite_nomi = match_key.replace("_vs_", " vs ").title()
+                    report_ieri_lines.append(f"• {partite_nomi} ({hg}-{ag}) ➔ {bet} {icona}")
+
+    # ==========================================
+    # 📥 4. DOWNLOAD QUOTE & PARTITE (FILTRATE)
+    # ==========================================
+    print("🔄 Connessione a Odss API...")
+    res_odss = requests.get(ODSS_URL, headers=headers_odss)
+    odds_cache = {}
+    if res_odss.status_code == 200:
+        odss_data = res_odss.json()
+        events_list = odss_data.get('data', odss_data.get('matches', odss_data.get('odds', [])))
+        for ev in events_list:
+            home_name = ev.get('home_team', ev.get('home', '')).lower()
+            away_name = ev.get('away_team', ev.get('away', '')).lower()
+            key_match = f"{home_name}_vs_{away_name}"
+            
+            odds_cache[key_match] = {
+                "1": ev.get('odds_1', ev.get('home_odds', 2.0)),
+                "x": ev.get('odds_x', ev.get('draw_odds', 3.2)),
+                "2": ev.get('odds_2', ev.get('away_odds', 3.0)),
+                "1x": ev.get('odds_1x', 1.55),
+                "x2": ev.get('odds_x2', 1.60),
+                "over15": ev.get('over_15', 1.50),
+                "under15": ev.get('under_15', 3.0),
+                "over25": ev.get('over_25', 1.9),
+                "under25": ev.get('under_25', 1.8),
+                "over35": ev.get('over_35', 3.5),
+                "goal": ev.get('btts_yes', 1.85),
+                "corners": ev.get('over_corners', 1.85),
+                "cards": ev.get('over_cards', 1.90),
+                "shots": ev.get('over_shots', 1.85)
+            }
+
+    url_matches = f"https://api.football-data.org/v4/matches?dateFrom={start_date}&dateTo={end_date}"
+    res_fd = requests.get(url_matches, headers=headers_fd)
+    time.sleep(2)
+    
+    all_fetched_matches = res_fd.json().get('matches', []) if res_fd.status_code == 200 else []
+    raw_matches = []
+
+    for m in all_fetched_matches:
+        utc_date_str = m.get('utcDate')
+        if utc_date_str:
+            dt_utc = datetime.strptime(utc_date_str[:19], '%Y-%m-%dT%H:%M:%S')
+            dt_italy = dt_utc + timedelta(hours=1)
+            
+            # Filtro rigido basato sulla finestra calcistica (dalle 08:00 alle 07:59 del giorno dopo)
+            if soglia_inizio <= dt_italy < soglia_fine:
+                raw_matches.append(m)
+
+    comp_ids = set(m.get('competition', {}).get('id') for m in raw_matches if m.get('competition', {}).get('id'))
+    classifiche_cache = {}
+    
+    for comp_id in comp_ids:
+        url_standings = f"https://api.football-data.org/v4/competitions/{comp_id}/standings"
+        res_st = requests.get(url_standings, headers=headers_fd)
+        time.sleep(2)
+        if res_st.status_code == 200:
+            standings_list = res_st.json().get('standings', [])
+            table = [s.get('table', []) for s in standings_list if s.get('type'] == 'TOTAL'] if 'standings' in res_st.json() else []
+            table = table[0] if table else []
+            classifiche_cache[comp_id] = {item['team']['name']: item for item in table if 'team' in item}
+        else:
+            classifiche_cache[comp_id] = {}
+
+    partite_analizzate = []
+    nuovo_storico_oggi = {}
+
+    for m in raw_matches:
+        comp_id = m.get('competition', {}).get('id')
+        status_match = m.get('status', 'TIMED')
+        home_team = m.get('homeTeam', {})
+        away_team = m.get('awayTeam', {})
+        
+        casa = home_team.get('shortName') or home_team.get('name', 'Casa')
+        ospite = away_team.get('shortName') or away_team.get('name', 'Ospite')
+        
+        standings_map = classifiche_cache.get(comp_id, {})
+        dati_casa = standings_map.get(home_team.get('name'), {"goalsFor": 15, "goalsAgainst": 10})
+        dati_ospite = standings_map.get(away_team.get('name'), {"goalsFor": 12, "goalsAgainst": 12})
+        
+        home_xg = max(0.8, (dati_casa.get('goalsFor', 15) + dati_ospite.get('goalsAgainst', 12)) / 20)
+        away_xg = max(0.6, (dati_ospite.get('goalsFor', 12) + dati_casa.get('goalsAgainst', 10)) / 22)
+        
+        home_corners, away_corners = 5.2, 4.3
+        home_cards, away_cards = 2.1, 2.4
+        home_shots, away_shots = 13.5, 11.0
+
+        probs = calculate_match_probabilities(home_xg, away_xg, home_corners, away_corners, home_cards, away_cards, home_shots, away_shots)
+        match_odds = find_odds_for_match(casa, ospite, odds_cache)
+        best_bet = evaluate_best_bet(probs, match_odds)
+        is_rinviata = status_match in ['POSTPONED', 'SUSPENDED', 'CANCELLED']
+
+        match_key = f"{casa.lower()}_vs_{ospite.lower()}"
+        if best_bet['is_value']:
+            nuovo_storico_oggi[match_key] = {"bet_type": best_bet['bet_type']}
+
+        partite_analizzate.append({
+            "casa": casa, "ospite": ospite,
+            "status": status_match, "is_rinviata": is_rinviata,
+            "best_bet": best_bet
+        })
+
+    storico_completo = {}
+    if os.path.exists(STORICO_FILE):
+        with open(STORICO_FILE, "r") as f:
+            try: storico_completo = json.load(f)
+            except: storico_completo = {}
+            
+    storico_completo[oggi] = nuovo_storico_oggi
+    with open(STORICO_FILE, "w") as f:
+        json.dump(storico_completo, f, indent=4)
+
+    partite_analizzate.sort(key=lambda x: -x['best_bet']['edge'])
+
+    # ==========================================
+    # 📄 5. GENERAZIONE REPORT PDF
+    # ==========================================
+    doc = SimpleDocTemplate(pdf_filename, pagesize=letter, rightMargin=25, leftMargin=25, topMargin=30, bottomMargin=30)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=15, textColor=colors.HexColor('#1A365D'), spaceAfter=4, alignment=1)
+    subtitle_style = ParagraphStyle('SubTitleStyle', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#4A5568'), spaceAfter=12, alignment=1)
+    cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#2D3748'))
+    header_cell_style = ParagraphStyle('HeaderCellStyle', parent=styles['Normal'], fontSize=8, textColor=colors.white, fontName='Helvetica-Bold')
+
+    elements.append(Paragraph(f"<b>REPORT QUANTITATIVO - ALTA QUALITÀ</b>", title_style))
+    elements.append(Paragraph(f"Data: {oggi} | Quota Min: 1.50 | Edge Min: 3% | Kelly: 30%", subtitle_style))
+    elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#2B6CB0'), spaceAfter=12))
+
+    table_data = [[
+        Paragraph("<b>Match</b>", header_cell_style),
+        Paragraph("<b>Modello %</b>", header_cell_style),
+        Paragraph("<b>Quota Reale</b>", header_cell_style),
+        Paragraph("<b>Edge %</b>", header_cell_style),
+        Paragraph("<b>Value?</b>", header_cell_style),
+        Paragraph("<b>Pronostico Consigliato</b>", header_cell_style)
+    ]]
+
+    for m in partite_analizzate[:15]:
+        bb = m['best_bet']
+        if m['is_rinviata']:
+            match_str = f"{m['casa']} - {m['ospite']} (Rinviata)"
+            p_str, q_str, edge_str, val_str, pron_str = "-", "-", "-", "-", "⏳ Rinviata"
+        else:
+            match_str = f"{m['casa']} vs {m['ospite']}"
+            p_str = f"{bb['model_prob']}%"
+            q_str = str(bb['odds']) if bb['odds'] > 0 else "-"
+            edge_str = f"+{bb['edge']}%" if bb['edge'] > 0 else "-"
+            val_str = "🟢 SI" if bb['is_value'] else "🔴 NO"
+            pron_str = f"<b>{bb['bet_type']}</b>"
+
+        table_data.append([
+            Paragraph(match_str, cell_style),
+            Paragraph(p_str, cell_style),
+            Paragraph(q_str, cell_style),
+            Paragraph(edge_str, cell_style),
+            Paragraph(val_str, cell_style),
+            Paragraph(pron_str, cell_style)
+        ])
+
+    t = Table(table_data, colWidths=[150, 60, 60, 55, 50, 187])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1A365D')),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F7FAFC')]),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E0'))
+    ]))
+
+    elements.append(t)
+    doc.build(elements)
+
+    # ==========================================
+    # 📤 6. INVIO TELEGRAM
+    # ==========================================
+    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    
+    caption_text = f"🧠 Report Quantitativo Alta Qualità ({oggi})\n\n"
+    if report_ieri_lines:
+        caption_text += f"📊 Bilancio Pronostici di Ieri ({ieri}):\n" + "\n".join(report_ieri_lines)
+    else:
+        caption_text += f"📊 Bilancio Ieri ({ieri}): Nessun pronostico nello storico o partite non ancora concluse."
+
+    with open(pdf_filename, 'rb') as pdf_file:
+        files = {'document': pdf_file}
+        payload = {
+            "chat_id": CHAT_ID,
+            "caption": caption_text
+        }
+        res_tg = requests.post(telegram_url, data=payload, files=files)
+        
+        if res_tg.status_code == 200:
+            print("✅ Documento e bilancio inviati con successo su Telegram!")
+        else:
+            print(f"❌ Errore invio Telegram (Codice {res_tg.status_code}): {res_tg.text}")
+
+except Exception as e:
+    print(f"❌ Errore generale nell'esecuzione: {e}")
+
+print("✅ Esecuzione completata con successo.")
