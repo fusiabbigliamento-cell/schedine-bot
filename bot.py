@@ -162,89 +162,7 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
 
 try:
     # ==========================================
-    # 📊 3. VERIFICA ESITI CON DEBUG INTEGRATO
-    # ==========================================
-    report_ieri_lines = []
-    data_da_verificare = None
-    
-    if os.path.exists(STORICO_FILE):
-        with open(STORICO_FILE, "r") as f:
-            storico_data = json.load(f)
-            
-        print(f"🔍 [DEBUG] Date presenti nello storico JSON: {list(storico_data.keys())}")
-        date_disponibili = [d for d in storico_data.keys() if d < oggi]
-        if date_disponibili:
-            data_da_verificare = max(date_disponibili)
-            print(f"🔄 [DEBUG] Data scelta per la verifica: {data_da_verificare} (Oggi è {oggi})")
-
-        if data_da_verificare:
-            url_ieri = f"https://api.football-data.org/v4/matches?date={data_da_verificare}"
-            res_ieri = requests.get(url_ieri, headers=headers_fd)
-            time.sleep(2)
-            
-            risultati_reali_ieri = {}
-            if res_ieri.status_code == 200:
-                matches_resp = res_ieri.json().get('matches', [])
-                print(f"🔍 [DEBUG] Trovati {len(matches_resp)} match totali da Football-Data per la data {data_da_verificare}")
-                for mi in matches_resp:
-                    status = mi.get('status')
-                    c_it = mi.get('homeTeam', {}).get('shortName', mi.get('homeTeam', {}).get('name', '')).lower()
-                    o_it = mi.get('awayTeam', {}).get('shortName', mi.get('awayTeam', {}).get('name', '')).lower()
-                    key_m = f"{c_it}_vs_{o_it}"
-                    if status == 'FINISHED':
-                        score = mi.get('score', {}).get('fullTime', {})
-                        hg = score.get('home', 0)
-                        ag = score.get('away', 0)
-                        risultati_reali_ieri[key_m] = {"hg": hg, "ag": ag}
-                        print(f"   ✅ [MATCH FINITO] {key_m} -> {hg}-{ag}")
-                    else:
-                        print(f"   ⏳ [MATCH NON FINITO/ALTRO] {key_m} -> Status: {status}")
-
-            keys_reali = list(risultati_reali_ieri.keys())
-            pronostici_giorno = storico_data[data_da_verificare]
-            print(f"🔍 [DEBUG] Pronostici salvati nel JSON per {data_da_verificare}: {list(pronostici_giorno.keys())}")
-
-            for match_key, pronostico_salvato in pronostici_giorno.items():
-                target_key = match_key
-                if target_key not in risultati_reali_ieri and keys_reali:
-                    match_trovati = get_close_matches(target_key, keys_reali, n=1, cutoff=0.35)
-                    if match_trovati:
-                        target_key = match_trovati[0]
-                        print(f"   🔗 [MATCH MATCHED] '{match_key}' agganciato a '{target_key}' tramite somiglianza.")
-                    else:
-                        print(f"   ❌ [MATCH NON TROVATO] Impossibile trovare '{match_key}' tra i risultati reali.")
-                
-                if target_key in risultati_reali_ieri:
-                    res = risultati_reali_ieri[target_key]
-                    hg, ag = res["hg"], res["ag"]
-                    tot_g = hg + ag
-                    
-                    bet = pronostico_salvato["bet_type"]
-                    vinta = False
-                    
-                    if bet == "Segno 1": vinta = hg > ag
-                    elif bet == "Segno X": vinta = hg == ag
-                    elif bet == "Segno 2": vinta = hg < ag
-                    elif bet == "Doppia 1X": vinta = hg >= ag
-                    elif bet == "Doppia X2": vinta = hg <= ag
-                    elif "Over 1.5" in bet: vinta = tot_g > 1.5
-                    elif "Under 1.5" in bet: vinta = tot_g < 1.5
-                    elif "Over 2.5" in bet: vinta = tot_g > 2.5
-                    elif "Under 2.5" in bet: vinta = tot_g < 2.5
-                    elif "Over 3.5" in bet: vinta = tot_g > 3.5
-                    elif "Goal (BTTS)" in bet: vinta = hg > 0 and ag > 0
-                    else: vinta = hg > ag
-                    
-                    icona = "✅" if vinta else "❌"
-                    partite_nomi = match_key.replace("_vs_", " vs ").title()
-                    report_ieri_lines.append(f"• {partite_nomi} ({hg}-{ag}) ➔ {bet} {icona}")
-        else:
-            print("⚠️ [DEBUG] Nessuna data disponibile nel JSON precedente a oggi.")
-    else:
-        print("⚠️ [DEBUG] File storico_pronostici.json non trovato.")
-
-    # ==========================================
-    # 📥 4. DOWNLOAD QUOTE & PARTITE (FILTRATE)
+    # 📥 DOWNLOAD QUOTE & PARTITE (FILTRATE)
     # ==========================================
     print("🔄 Connessione a Odss API per il recupero delle quote...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
@@ -417,15 +335,11 @@ try:
     doc.build(elements)
 
     # ==========================================
-    # 📤 6. INVIO TELEGRAM
+    # 📤 6. INVIO TELEGRAM (SOLO REPORT OGGI)
     # ==========================================
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     
-    caption_text = f"🧠 Report Quantitativo Alta Qualità ({oggi})\n\n"
-    if report_ieri_lines:
-        caption_text += f"📊 Bilancio Pronostici ({data_da_verificare}):\n" + "\n".join(report_ieri_lines)
-    else:
-        caption_text += f"📊 Bilancio Ieri: Nessun pronostico nello storico o partite non ancora concluse."
+    caption_text = f"🧠 Report Quantitativo Alta Qualità ({oggi})\n\nTrovi allegato il documento PDF con l'analisi dettagliata delle value bets odierne."
 
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
@@ -436,7 +350,7 @@ try:
         res_tg = requests.post(telegram_url, data=payload, files=files)
         
         if res_tg.status_code == 200:
-            print("✅ Documento e bilancio inviati con successo su Telegram!")
+            print("✅ Documento inviato con successo su Telegram!")
         else:
             print(f"❌ Errore invio Telegram (Codice {res_tg.status_code}): {res_tg.text}")
 
