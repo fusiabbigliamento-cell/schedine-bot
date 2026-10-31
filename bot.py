@@ -40,7 +40,6 @@ else:
 
 start_date = start_dt.strftime('%Y-%m-%d')
 end_date = end_dt.strftime('%Y-%m-%d')
-ieri = ieri_dt.strftime('%Y-%m-%d')
 oggi = start_date
 
 # Finestra oraria rigorosa: dalle 08:00 di oggi alle 07:59 del giorno dopo
@@ -165,34 +164,47 @@ def evaluate_best_bet(probs, match_odds_dict, bankroll=1000.0):
 
 try:
     # ==========================================
-    # 📊 3. VERIFICA ESITI DI IERI CON ✅ / ❌
+    # 📊 3. VERIFICA ESITI DELL'ULTIMO GIORNO SALVATO (INTELLIGENTE)
     # ==========================================
-    print(f"🔄 Verifica esiti delle partite di ieri ({ieri})...")
     report_ieri_lines = []
+    data_da_verificare = None
     
     if os.path.exists(STORICO_FILE):
         with open(STORICO_FILE, "r") as f:
             storico_data = json.load(f)
             
-        url_ieri = f"https://api.football-data.org/v4/matches?date={ieri}"
-        res_ieri = requests.get(url_ieri, headers=headers_fd)
-        time.sleep(2)
-        
-        risultati_reali_ieri = {}
-        if res_ieri.status_code == 200:
-            for mi in res_ieri.json().get('matches', []):
-                if mi.get('status') == 'FINISHED':
-                    c_it = mi.get('homeTeam', {}).get('shortName', mi.get('homeTeam', {}).get('name', '')).lower()
-                    o_it = mi.get('awayTeam', {}).get('shortName', mi.get('awayTeam', {}).get('name', '')).lower()
-                    score = mi.get('score', {}).get('fullTime', {})
-                    hg = score.get('home', 0)
-                    ag = score.get('away', 0)
-                    risultati_reali_ieri[f"{c_it}_vs_{o_it}"] = {"hg": hg, "ag": ag}
+        # Trova la data più recente registrata nel JSON che sia precedente a oggi
+        date_disponibili = [d for d in storico_data.keys() if d < oggi]
+        if date_disponibili:
+            data_da_verificare = max(date_disponibili)
+            print(f"🔄 Trovata data precedente nello storico da verificare: {data_da_verificare}")
 
-        if ieri in storico_data:
-            for match_key, pronostico_salvato in storico_data[ieri].items():
-                if match_key in risultati_reali_ieri:
-                    res = risultati_reali_ieri[match_key]
+        if data_da_verificare:
+            url_ieri = f"https://api.football-data.org/v4/matches?date={data_da_verificare}"
+            res_ieri = requests.get(url_ieri, headers=headers_fd)
+            time.sleep(2)
+            
+            risultati_reali_ieri = {}
+            if res_ieri.status_code == 200:
+                for mi in res_ieri.json().get('matches', []):
+                    if mi.get('status') == 'FINISHED':
+                        c_it = mi.get('homeTeam', {}).get('shortName', mi.get('homeTeam', {}).get('name', '')).lower()
+                        o_it = mi.get('awayTeam', {}).get('shortName', mi.get('awayTeam', {}).get('name', '')).lower()
+                        score = mi.get('score', {}).get('fullTime', {})
+                        hg = score.get('home', 0)
+                        ag = score.get('away', 0)
+                        risultati_reali_ieri[f"{c_it}_vs_{o_it}"] = {"hg": hg, "ag": ag}
+
+            keys_reali = list(risultati_reali_ieri.keys())
+            for match_key, pronostico_salvato in storico_data[data_da_verificare].items():
+                target_key = match_key
+                if target_key not in risultati_reali_ieri and keys_reali:
+                    match_trovati = get_close_matches(target_key, keys_reali, n=1, cutoff=0.35)
+                    if match_trovati:
+                        target_key = match_trovati[0]
+                
+                if target_key in risultati_reali_ieri:
+                    res = risultati_reali_ieri[target_key]
                     hg, ag = res["hg"], res["ag"]
                     tot_g = hg + ag
                     
@@ -260,7 +272,6 @@ try:
             dt_utc = datetime.strptime(utc_date_str[:19], '%Y-%m-%dT%H:%M:%S')
             dt_italy = dt_utc + timedelta(hours=1)
             
-            # Filtro rigoroso: solo partite comprese esattamente tra le 08:00 di oggi e le 07:59 di domani
             if soglia_inizio <= dt_italy < soglia_fine:
                 raw_matches.append(m)
 
@@ -397,9 +408,9 @@ try:
     
     caption_text = f"🧠 Report Quantitativo Alta Qualità ({oggi})\n\n"
     if report_ieri_lines:
-        caption_text += f"📊 Bilancio Pronostici di Ieri ({ieri}):\n" + "\n".join(report_ieri_lines)
+        caption_text += f"📊 Bilancio Pronostici del giorno precedente ({data_da_verificare}):\n" + "\n".join(report_ieri_lines)
     else:
-        caption_text += f"📊 Bilancio Ieri ({ieri}): Nessun pronostico nello storico o partite non ancora concluse."
+        caption_text += f"📊 Bilancio Ieri: Nessun pronostico nello storico o partite non ancora concluse."
 
     with open(pdf_filename, 'rb') as pdf_file:
         files = {'document': pdf_file}
