@@ -50,7 +50,7 @@ soglia_fine = soglia_inizio + timedelta(hours=24)
 pdf_filename = f"pronostici_definitivo_{oggi}.pdf"
 STORICO_FILE = "storico_pronostici.json"
 
-print(f"🔄 Avvio motore quantitativo ad alta qualità per la finestra: {soglia_inizio} -> {soglia_fine}...")
+print(f"🔄 Avvio motore quantitativo per la finestra: {soglia_inizio} -> {soglia_fine}...")
 
 def poisson_probability(lmbda, k):
     return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
@@ -100,7 +100,7 @@ def find_odds_for_match(casa, ospite, odds_cache):
         return odds_cache[match_key]
     
     all_keys = list(odds_cache.keys())
-    close_matches = get_close_matches(match_key, all_keys, n=1, cutoff=0.4)
+    close_matches = get_close_matches(match_key, all_keys, n=1, cutoff=0.35)
     if close_matches:
         return odds_cache[close_matches[0]]
     
@@ -219,7 +219,7 @@ try:
     # ==========================================
     # 📥 4. DOWNLOAD QUOTE & PARTITE (FILTRATE)
     # ==========================================
-    print("🔄 Connessione a Odss API...")
+    print("🔄 Connessione a Odss API per il recupero delle quote...")
     res_odss = requests.get(ODSS_URL, headers=headers_odss)
     odds_cache = {}
     if res_odss.status_code == 200:
